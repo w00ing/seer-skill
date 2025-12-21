@@ -1,6 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+usage() {
+  cat <<'EOF'
+capture_app_window.sh
+
+Usage:
+  capture_app_window.sh [out_path] [process_name]
+
+Defaults:
+  out_path     /tmp/app-window-shot.png
+  process_name frontmost app
+EOF
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
 out=${1:-/tmp/app-window-shot.png}
 process=${2:-}
 
