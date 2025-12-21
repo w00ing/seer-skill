@@ -20,11 +20,18 @@ Claude Code (plugin):
 - `/plugin marketplace add w00ing/seer-skill`
 - `/plugin install seer-skill@seer`
 
-Manual:
+Manual (Codex):
 ```bash
 mkdir -p ~/.codex/skills
 git clone https://github.com/w00ing/seer-skill.git /tmp/seer-skill
 rsync -a /tmp/seer-skill/seer/ ~/.codex/skills/seer/
+```
+
+Manual (Claude Code):
+```bash
+mkdir -p ~/.claude/skills
+git clone https://github.com/w00ing/seer-skill.git /tmp/seer-skill
+rsync -a /tmp/seer-skill/seer/ ~/.claude/skills/seer/
 ```
 
 ## Use
