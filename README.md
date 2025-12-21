@@ -16,6 +16,10 @@ python ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github
   --repo w00ing/seer-skill --path seer
 ```
 
+Claude Code plugin:
+- `/plugin marketplace add w00ing/seer-skill`
+- `/plugin install seer-skill@seer`
+
 ## Use
 
 - Skill name: `seer`

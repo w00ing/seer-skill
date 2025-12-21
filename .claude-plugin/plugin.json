@@ -1,0 +1,9 @@
+{
+  "name": "seer-skill",
+  "version": "0.1.1",
+  "description": "Visual feedback capture for macOS app windows.",
+  "author": {
+    "name": "w00ing"
+  },
+  "repository": "https://github.com/w00ing/seer-skill"
+}

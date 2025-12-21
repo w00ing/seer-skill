@@ -1,0 +1,16 @@
+{
+  "name": "seer",
+  "owner": {
+    "name": "w00ing"
+  },
+  "plugins": [
+    {
+      "name": "seer-skill",
+      "description": "Visual feedback capture for macOS app windows.",
+      "source": {
+        "source": "github",
+        "repo": "w00ing/seer-skill"
+      }
+    }
+  ]
+}
