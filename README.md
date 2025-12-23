@@ -43,6 +43,7 @@ rsync -a /tmp/seer-skill/seer/ ~/.claude/skills/seer/
 
 - Skill name: `seer`
 - Script: `seer/scripts/capture_app_window.sh`
+- Script: `seer/scripts/type_into_app.sh`
 - Default output: `/tmp/seer/app-window-shot-YYYYMMDD-HHMMSS-<pid>-<rand>.png`
 - Set `SEER_TMP_DIR` to change default output dir
 
@@ -51,6 +52,10 @@ Examples:
 bash seer/scripts/capture_app_window.sh
 bash seer/scripts/capture_app_window.sh /tmp/promptlight.png "Promptlight"
 bash seer/scripts/capture_app_window.sh --help
+bash seer/scripts/type_into_app.sh --app "Promptlight" --text "hello" --enter
+bash seer/scripts/type_into_app.sh --app "Promptlight" --click-rel 120,180 --text "hello"
+bash seer/scripts/type_into_app.sh --text "hello" --no-activate
+bash seer/scripts/type_into_app.sh --bundle-id com.example.app --text -
 ```
 
 ## Examples (prompts)
@@ -62,6 +67,7 @@ bash seer/scripts/capture_app_window.sh --help
 ## Permissions
 
 - macOS Screen Recording + Accessibility for terminal
+- Automation (System Events) required for `type_into_app.sh`
 
 ## Troubleshooting
 
