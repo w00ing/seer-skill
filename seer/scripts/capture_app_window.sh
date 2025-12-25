@@ -9,11 +9,12 @@ Usage:
   capture_app_window.sh [out_path] [process_name]
 
 Defaults:
-  out_path     /tmp/seer/app-window-shot-YYYYMMDD-HHMMSS-<pid>-<rand>.png
+  out_path     .seer/captures/app-window-<app>-YYYYMMDD-HHMMSS-<pid>-<rand>.png
   process_name frontmost app
 
 Env:
-  SEER_TMP_DIR override default output dir
+  SEER_OUT_DIR override default output root (default: .seer)
+  SEER_TMP_DIR legacy override for output root (used if SEER_OUT_DIR is unset)
 EOF
 }
 
@@ -22,13 +23,22 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
-tmp_dir=${SEER_TMP_DIR:-/tmp/seer}
+out_root=${SEER_OUT_DIR:-${SEER_TMP_DIR:-.seer}}
 ts=$(date +%Y%m%d-%H%M%S)
-out=${1:-${tmp_dir}/app-window-shot-${ts}-$$-$RANDOM.png}
+out=${1:-}
 process=${2:-}
 
 if [[ -z "${process}" ]]; then
   process=$(osascript -e 'tell application "System Events" to get name of first process whose frontmost is true' 2>/dev/null || true)
+fi
+
+slug=$(echo "${process}" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd 'a-z0-9._-')
+if [[ -z "${slug}" ]]; then
+  slug="app"
+fi
+
+if [[ -z "${out}" ]]; then
+  out="${out_root}/captures/app-window-${slug}-${ts}-$$-$RANDOM.png"
 fi
 
 pos=$(osascript -e "tell application \"System Events\" to tell process \"${process}\" to get position of window 1" 2>/dev/null || true)
