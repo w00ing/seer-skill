@@ -15,6 +15,7 @@ Capture a precise screenshot of a visible app window, annotate it for quick UI m
    - `bash scripts/capture_app_window.sh /path/to/out.png "Promptlight"` (custom output + process name)
 3. (Optional) Create a mockup with annotations:
    - `bash scripts/mockup_ui.sh --spec spec.json`
+   - `bash scripts/mockup_ui.sh --spec spec.json --json`
 4. (Optional) Store + compare in the visual loop:
    - `bash scripts/loop_compare.sh /path/to/out.png web-home`
    - First run creates a baseline under `$SEER_LOOP_DIR` (default `.seer`)
@@ -32,6 +33,7 @@ Capture a precise screenshot of a visible app window, annotate it for quick UI m
 - `bash scripts/type_into_app.sh --text "hello" --no-activate`
 - `bash scripts/mockup_ui.sh --help`
 - `bash scripts/mockup_ui.sh --spec spec.json`
+- `bash scripts/mockup_ui.sh --spec spec.json --json`
 - `python3 scripts/annotate_image.py input.png output.png --spec spec.json`
 - `bash scripts/loop_compare.sh --help`
 - `bash scripts/loop_compare.sh [--loop-dir <path>] [--resize] [--update-baseline] <current_path> <baseline_name>`

@@ -86,6 +86,7 @@ bash skills/seer/scripts/type_into_app.sh --app "Promptlight" --click-rel 120,18
 bash skills/seer/scripts/type_into_app.sh --text "hello" --no-activate
 bash skills/seer/scripts/type_into_app.sh --bundle-id com.example.app --text -
 bash skills/seer/scripts/mockup_ui.sh --spec spec.json
+bash skills/seer/scripts/mockup_ui.sh --spec spec.json --json
 python3 skills/seer/scripts/annotate_image.py input.png output.png --spec spec.json
 ```
 

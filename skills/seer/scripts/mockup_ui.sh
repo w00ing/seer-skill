@@ -8,18 +8,20 @@ mockup_ui.sh
 Capture a window image (optional) and annotate it with arrows, rectangles, and text.
 
 Usage:
-  mockup_ui.sh --spec <spec.json> [--out <output.png>] [--process <app_name>] [--input <image.png>]
+  mockup_ui.sh --spec <spec.json> [--out <output.png>] [--process <app_name>] [--input <image.png>] [--json]
 
 Options:
   --spec     Path to JSON spec (or - for stdin) [required]
   --out      Output PNG path (default: .seer/mockups/mockup-<app>-<ts>-<pid>-<rand>.png)
   --process  App process name to capture (default: frontmost app)
   --input    Existing image to annotate (skip capture)
+  --json     Print metadata JSON to stdout (suppresses path output)
 
 Examples:
   bash scripts/mockup_ui.sh --spec spec.json
   bash scripts/mockup_ui.sh --spec spec.json --process "Promptlight"
   cat spec.json | bash scripts/mockup_ui.sh --spec - --input /tmp/screen.png
+  bash scripts/mockup_ui.sh --spec spec.json --json
 
 Env:
   SEER_OUT_DIR override default output root (default: .seer)
@@ -36,6 +38,7 @@ spec=""
 out=""
 process=""
 input=""
+print_json=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -54,6 +57,10 @@ while [[ $# -gt 0 ]]; do
     --input)
       input="${2:-}"
       shift 2
+      ;;
+    --json)
+      print_json=1
+      shift
       ;;
     *)
       echo "error: unknown arg: $1"
@@ -130,7 +137,7 @@ annotated_path=$(python3 "${script_dir}/annotate_image.py" "${input}" "${out}" -
 
 meta_path="${report_dir}/mockup-${slug}-${run_id}.json"
 CAPTURE_PATH="${input}" SPEC_PATH="${spec}" OUTPUT_PATH="${annotated_path}" META_PATH="${meta_path}" \
-APP_NAME="${app_name}" APP_SLUG="${slug}" RUN_ID="${run_id}" \
+APP_NAME="${app_name}" APP_SLUG="${slug}" RUN_ID="${run_id}" PRINT_JSON="${print_json}" \
 python3 - <<'PY'
 import json
 import os
@@ -153,7 +160,8 @@ if meta_path:
     os.makedirs(os.path.dirname(meta_path), exist_ok=True)
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
-print(json.dumps(payload), file=sys.stderr)
+if os.environ.get("PRINT_JSON") == "1":
+    print(json.dumps(payload))
 PY
 
 cp -f "${input}" "${latest_dir}/capture-${slug}.png"
@@ -161,4 +169,6 @@ cp -f "${annotated_path}" "${latest_dir}/mockup-${slug}.png"
 cp -f "${spec}" "${latest_dir}/spec-${slug}.json"
 cp -f "${meta_path}" "${latest_dir}/mockup-${slug}.json"
 
-echo "${annotated_path}"
+if [[ ${print_json} -eq 0 ]]; then
+  echo "${annotated_path}"
+fi
