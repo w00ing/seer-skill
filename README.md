@@ -15,6 +15,13 @@ Visual feedback capture skill for macOS app windows.
 
 Full video: `assets/seer-demo.mov`
 
+## Features
+
+- Precise capture of a visible macOS app window
+- UI mockups by annotating screenshots (arrow, rectangle, text)
+- Scripted visual loop support (diffs, baselines, reports)
+- Organized output layout under `.seer/` with latest artifacts
+
 ## Install
 
 Codex (skill-installer UI):
