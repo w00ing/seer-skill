@@ -43,15 +43,40 @@ rsync -a /tmp/seer-skill/seer/ ~/.claude/skills/seer/
 
 - Skill name: `seer`
 - Script: `seer/scripts/capture_app_window.sh`
-- Default output: `/tmp/seer/app-window-shot-YYYYMMDD-HHMMSS-<pid>-<rand>.png`
-- Set `SEER_TMP_DIR` to change default output dir
+- Script: `seer/scripts/type_into_app.sh`
+- Script: `seer/scripts/mockup_ui.sh`
+- Script: `seer/scripts/annotate_image.py`
+- Default output: `.seer/captures/app-window-<app>-YYYYMMDD-HHMMSS-<pid>-<rand>.png`
+- Set `SEER_OUT_DIR` to change default output root (falls back to `SEER_TMP_DIR` for legacy behavior)
 
 Examples:
 ```bash
 bash seer/scripts/capture_app_window.sh
 bash seer/scripts/capture_app_window.sh /tmp/promptlight.png "Promptlight"
 bash seer/scripts/capture_app_window.sh --help
+bash seer/scripts/type_into_app.sh --app "Promptlight" --text "hello" --enter
+bash seer/scripts/type_into_app.sh --app "Promptlight" --click-rel 120,180 --text "hello"
+bash seer/scripts/type_into_app.sh --text "hello" --no-activate
+bash seer/scripts/type_into_app.sh --bundle-id com.example.app --text -
+bash seer/scripts/mockup_ui.sh --spec spec.json
+python3 seer/scripts/annotate_image.py input.png output.png --spec spec.json
 ```
+
+Mockup spec example:
+```json
+[
+  {"type": "rect", "x": 120, "y": 80, "w": 160, "h": 40, "color": "#FF3B30", "width": 3},
+  {"type": "arrow", "x1": 60, "y1": 140, "x2": 120, "y2": 100, "color": "#0A84FF", "width": 3},
+  {"type": "text", "x": 130, "y": 90, "text": "Add button", "color": "#FFFFFF", "bg": "#00000080", "size": 14}
+]
+```
+
+Output layout (default under `.seer/`):
+- `captures/` capture images
+- `mockups/` annotated mockups
+- `specs/` JSON specs (same base name as mockup)
+- `reports/` metadata JSON for each mockup
+- `latest/` latest capture/mockup/spec per app slug
 
 ## Examples (prompts)
 
@@ -62,6 +87,7 @@ bash seer/scripts/capture_app_window.sh --help
 ## Permissions
 
 - macOS Screen Recording + Accessibility for terminal
+- Automation (System Events) required for `type_into_app.sh`
 
 ## Troubleshooting
 
