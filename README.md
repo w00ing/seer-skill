@@ -32,6 +32,8 @@ Claude Code (plugin):
 - `/plugin marketplace add w00ing/seer-skill`
 - `/plugin install seer-skill@seer`
   - If the marketplace was previously added, run `/plugin marketplace update seer` before installing to pick up updates.
+  - If you see an SSH clone error, add the marketplace via HTTPS instead:
+    - `/plugin marketplace add https://github.com/w00ing/seer-skill.git`
 
 Manual (Codex):
 ```bash
