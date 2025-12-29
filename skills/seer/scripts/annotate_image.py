@@ -219,8 +219,33 @@ def _expand_bbox(bbox, pad: float, image_size):
     return (x0, y0, x1, y1)
 
 
-def _apply_fit(ann: dict, image_rgb: Image.Image) -> dict:
-    fit = _normalize_fit(ann.get("fit"))
+def _resolve_fit_config(ann: dict, defaults: Optional[dict]):
+    defaults = defaults or {}
+    if "fit" in ann:
+        return ann.get("fit")
+    auto_fit = defaults.get("auto_fit", True)
+    if isinstance(auto_fit, str):
+        auto_fit = auto_fit.strip().lower() not in ("0", "false", "no")
+    if not auto_fit:
+        return None
+    config = {"mode": defaults.get("fit_mode", "luma")}
+    if "fit_threshold" in defaults:
+        config["threshold"] = defaults.get("fit_threshold")
+    if "fit_target" in defaults:
+        config["target"] = defaults.get("fit_target")
+    if "fit_tolerance" in defaults:
+        config["tolerance"] = defaults.get("fit_tolerance")
+    if "fit_color" in defaults:
+        config["color"] = defaults.get("fit_color")
+    if "fit_pad" in defaults:
+        config["pad"] = defaults.get("fit_pad")
+    if "fit_min_pixels" in defaults:
+        config["min_pixels"] = defaults.get("fit_min_pixels")
+    return config
+
+
+def _apply_fit(ann: dict, image_rgb: Image.Image, defaults: Optional[dict]) -> dict:
+    fit = _normalize_fit(_resolve_fit_config(ann, defaults))
     if not fit:
         return ann
     mode = str(fit.get("mode", "luma")).lower()
@@ -479,7 +504,7 @@ def main() -> int:
     overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
     for ann in spotlights:
         ann = _merge_defaults(defaults, ann)
-        ann = _apply_fit(ann, image_rgb)
+        ann = _apply_fit(ann, image_rgb, defaults)
         ann_scale = float(ann.get("scale", base_scale))
         try:
             overlay = _draw_spotlight(overlay, ann, ann_scale, defaults)
@@ -493,7 +518,7 @@ def main() -> int:
         ann_type = str(ann.get("type", "")).lower()
         try:
             if ann_type == "rect":
-                ann = _apply_fit(ann, image_rgb)
+                ann = _apply_fit(ann, image_rgb, defaults)
                 _draw_rect(draw, ann, ann_scale)
             elif ann_type == "arrow":
                 _draw_arrow(draw, ann, ann_scale)
