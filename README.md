@@ -139,6 +139,20 @@ Notes:
 - `fit: {"mode":"color"}` matches a target color with `tolerance` (default `18`). Use `pad` to expand the result.
 - Optional defaults: `fit_mode`, `fit_threshold`, `fit_target`, `fit_tolerance`, `fit_color`, `fit_pad`, `fit_min_pixels`.
 
+Auto-anchor arrows/text (optional):
+```json
+{
+  "annotations": [
+    {"type": "rect", "id": "cta", "x": 40, "y": 2600, "w": 1240, "h": 170, "color": "#FF9F0A"},
+    {"type": "arrow", "from": "cta", "from_pos": "top", "to": "nearest", "to_pos": "left"},
+    {"type": "text", "text": "CTA needs more contrast", "anchor": "cta", "anchor_pos": "top", "anchor_offset": [0, -8]}
+  ]
+}
+```
+Notes:
+- `anchor` (text) and `from`/`to` (arrow) accept `"nearest"`, an `id`, or an `index`.
+- Positions: `center`, `top`, `bottom`, `left`, `right`, `top_left`, `top_right`, `bottom_left`, `bottom_right`.
+
 Output layout (default under `.seer/`):
 - `captures/` capture images
 - `mockups/` annotated mockups

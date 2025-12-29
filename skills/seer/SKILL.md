@@ -35,7 +35,7 @@ Capture a precise screenshot of a visible app window, annotate it for quick UI m
 - `bash scripts/mockup_ui.sh --spec spec.json`
 - `bash scripts/mockup_ui.sh --spec spec.json --json`
 - `python3 scripts/annotate_image.py input.png output.png --spec spec.json`
-- `annotate_image.py` supports top-level `defaults` (e.g., `auto_scale`, `outline`, `text_bg`), `spotlight` annotations to dim the background, and `fit` (enabled by default) to auto-adjust rect/spotlight bounds.
+- `annotate_image.py` supports top-level `defaults` (e.g., `auto_scale`, `outline`, `text_bg`), `spotlight` annotations to dim the background, `fit` (enabled by default) to auto-adjust rect/spotlight bounds, and `anchor`/`from`/`to` for auto-anchoring labels and arrows.
 - `bash scripts/loop_compare.sh --help`
 - `bash scripts/loop_compare.sh [--loop-dir <path>] [--resize] [--update-baseline] <current_path> <baseline_name>`
   - set `SEER_LOOP_DIR` to change default loop directory (default `.seer`)

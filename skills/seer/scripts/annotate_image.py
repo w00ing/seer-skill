@@ -219,6 +219,178 @@ def _expand_bbox(bbox, pad: float, image_size):
     return (x0, y0, x1, y1)
 
 
+def _normalize_anchor_spec(value):
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return {"nearest": True} if value else None
+    if isinstance(value, (int, float)):
+        return {"index": int(value)}
+    if isinstance(value, str):
+        if value.strip().lower() == "nearest":
+            return {"nearest": True}
+        return {"id": value}
+    if isinstance(value, dict):
+        return dict(value)
+    return None
+
+
+def _parse_offset(value):
+    if value is None:
+        return (0.0, 0.0)
+    if isinstance(value, (list, tuple)) and len(value) >= 2:
+        return (float(value[0]), float(value[1]))
+    if isinstance(value, str):
+        parts = [p.strip() for p in value.replace(" ", "").split(",")]
+        if len(parts) >= 2:
+            try:
+                return (float(parts[0]), float(parts[1]))
+            except Exception:
+                return (0.0, 0.0)
+    return (0.0, 0.0)
+
+
+def _target_center(bbox):
+    x0, y0, x1, y1 = bbox
+    return ((x0 + x1) / 2.0, (y0 + y1) / 2.0)
+
+
+def _bbox_from_ann(ann: dict):
+    try:
+        x = float(ann.get("x", 0))
+        y = float(ann.get("y", 0))
+        w = float(ann.get("w", 0))
+        h = float(ann.get("h", 0))
+    except Exception:
+        return None
+    if w <= 0 or h <= 0:
+        return None
+    return (x, y, x + w, y + h)
+
+
+def _anchor_point(bbox, pos: str):
+    x0, y0, x1, y1 = bbox
+    cx, cy = _target_center(bbox)
+    key = (pos or "center").strip().lower().replace("-", "_")
+    mapping = {
+        "center": (cx, cy),
+        "top": (cx, y0),
+        "bottom": (cx, y1),
+        "left": (x0, cy),
+        "right": (x1, cy),
+        "top_left": (x0, y0),
+        "top_right": (x1, y0),
+        "bottom_left": (x0, y1),
+        "bottom_right": (x1, y1),
+    }
+    return mapping.get(key, (cx, cy))
+
+
+def _resolve_target(anchor_spec, targets, fallback_point):
+    if not targets:
+        return None
+    spec = anchor_spec or {}
+    target_id = spec.get("id")
+    target_index = spec.get("index")
+    target_type = spec.get("type")
+    candidates = targets
+    if target_type:
+        candidates = [t for t in candidates if t.get("type") == target_type]
+    if target_id:
+        for t in candidates:
+            if t.get("id") == target_id:
+                return t
+    if target_index is not None:
+        for t in candidates:
+            if t.get("index") == target_index:
+                return t
+    if spec.get("nearest") or not (target_id or target_index or target_type):
+        fx, fy = fallback_point
+        best = None
+        best_dist = None
+        for t in candidates:
+            tx, ty = _target_center(t["bbox"])
+            dist = (tx - fx) ** 2 + (ty - fy) ** 2
+            if best_dist is None or dist < best_dist:
+                best = t
+                best_dist = dist
+        return best
+    return None
+
+
+def _resolve_anchor_pos(value, defaults: Optional[dict], fallback: str):
+    defaults = defaults or {}
+    if value:
+        return value
+    if defaults.get("anchor_pos"):
+        return defaults.get("anchor_pos")
+    return fallback
+
+
+def _resolve_anchor_offset(value, defaults: Optional[dict], fallback=None):
+    defaults = defaults or {}
+    if value is not None:
+        return _parse_offset(value)
+    if defaults.get("anchor_offset") is not None:
+        return _parse_offset(defaults.get("anchor_offset"))
+    if fallback is not None:
+        return _parse_offset(fallback)
+    return (0.0, 0.0)
+
+
+def _apply_text_anchor(ann: dict, targets, defaults: Optional[dict], image_size):
+    anchor_spec = _normalize_anchor_spec(ann.get("anchor"))
+    if not anchor_spec:
+        return ann
+    x = float(ann.get("x", image_size[0] / 2))
+    y = float(ann.get("y", image_size[1] / 2))
+    target = _resolve_target(anchor_spec, targets, (x, y))
+    if not target:
+        return ann
+    pos = anchor_spec.get("pos") or ann.get("anchor_pos")
+    pos = _resolve_anchor_pos(pos, defaults, "top")
+    offset = anchor_spec.get("offset") or ann.get("anchor_offset")
+    dx, dy = _resolve_anchor_offset(offset, defaults)
+    ax, ay = _anchor_point(target["bbox"], pos)
+    updated = dict(ann)
+    updated["x"] = ax + dx
+    updated["y"] = ay + dy
+    return updated
+
+
+def _apply_arrow_anchor(ann: dict, targets, defaults: Optional[dict], image_size):
+    from_spec = _normalize_anchor_spec(ann.get("from"))
+    to_spec = _normalize_anchor_spec(ann.get("to"))
+    if not from_spec and not to_spec:
+        return ann
+    updated = dict(ann)
+    if from_spec:
+        x1 = float(ann.get("x1", image_size[0] / 2))
+        y1 = float(ann.get("y1", image_size[1] / 2))
+        target = _resolve_target(from_spec, targets, (x1, y1))
+        if target:
+            pos = from_spec.get("pos") or ann.get("from_pos")
+            pos = _resolve_anchor_pos(pos, defaults, "center")
+            offset = from_spec.get("offset") or ann.get("from_offset")
+            dx, dy = _resolve_anchor_offset(offset, defaults, None)
+            ax, ay = _anchor_point(target["bbox"], pos)
+            updated["x1"] = ax + dx
+            updated["y1"] = ay + dy
+    if to_spec:
+        x2 = float(ann.get("x2", image_size[0] / 2))
+        y2 = float(ann.get("y2", image_size[1] / 2))
+        target = _resolve_target(to_spec, targets, (x2, y2))
+        if target:
+            pos = to_spec.get("pos") or ann.get("to_pos")
+            pos = _resolve_anchor_pos(pos, defaults, "center")
+            offset = to_spec.get("offset") or ann.get("to_offset")
+            dx, dy = _resolve_anchor_offset(offset, defaults, None)
+            ax, ay = _anchor_point(target["bbox"], pos)
+            updated["x2"] = ax + dx
+            updated["y2"] = ay + dy
+    return updated
+
+
 def _resolve_fit_config(ann: dict, defaults: Optional[dict]):
     defaults = defaults or {}
     if "fit" in ann:
@@ -492,19 +664,43 @@ def main() -> int:
     annotations = spec.get("annotations", [])
     spotlights = []
     others = []
-    for ann in annotations:
+    for idx, ann in enumerate(annotations):
         if not isinstance(ann, dict):
             continue
         ann_type = str(ann.get("type", "")).lower()
         if ann_type in ("spotlight", "focus", "dim"):
-            spotlights.append(ann)
+            spotlights.append((idx, ann))
         else:
-            others.append(ann)
+            others.append((idx, ann))
 
-    overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
-    for ann in spotlights:
+    prepared_spotlights = []
+    prepared_others = []
+    anchor_targets = []
+
+    for idx, ann in spotlights:
         ann = _merge_defaults(defaults, ann)
         ann = _apply_fit(ann, image_rgb, defaults)
+        prepared_spotlights.append(ann)
+        bbox = _bbox_from_ann(ann)
+        if bbox:
+            anchor_targets.append(
+                {"id": ann.get("id"), "index": idx, "type": "spotlight", "bbox": bbox}
+            )
+
+    for idx, ann in others:
+        ann = _merge_defaults(defaults, ann)
+        ann_type = str(ann.get("type", "")).lower()
+        if ann_type == "rect":
+            ann = _apply_fit(ann, image_rgb, defaults)
+            bbox = _bbox_from_ann(ann)
+            if bbox:
+                anchor_targets.append(
+                    {"id": ann.get("id"), "index": idx, "type": "rect", "bbox": bbox}
+                )
+        prepared_others.append(ann)
+
+    overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    for ann in prepared_spotlights:
         ann_scale = float(ann.get("scale", base_scale))
         try:
             overlay = _draw_spotlight(overlay, ann, ann_scale, defaults)
@@ -512,17 +708,17 @@ def main() -> int:
             print(f"warn: failed annotation spotlight: {exc}", file=sys.stderr)
 
     draw = ImageDraw.Draw(overlay)
-    for ann in others:
-        ann = _merge_defaults(defaults, ann)
+    for ann in prepared_others:
         ann_scale = float(ann.get("scale", base_scale))
         ann_type = str(ann.get("type", "")).lower()
         try:
             if ann_type == "rect":
-                ann = _apply_fit(ann, image_rgb, defaults)
                 _draw_rect(draw, ann, ann_scale)
             elif ann_type == "arrow":
+                ann = _apply_arrow_anchor(ann, anchor_targets, defaults, image.size)
                 _draw_arrow(draw, ann, ann_scale)
             elif ann_type == "text":
+                ann = _apply_text_anchor(ann, anchor_targets, defaults, image.size)
                 _draw_text(draw, ann, ann_scale)
         except Exception as exc:
             print(f"warn: failed annotation {ann_type}: {exc}", file=sys.stderr)
