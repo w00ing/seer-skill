@@ -32,7 +32,7 @@ Spec JSON schema (minimal):
     "fit_threshold": 160,
     "fit_target": "dark",
     "fit_min_pixels": 30,
-    "fit_min_coverage": 0.2,
+    "fit_min_coverage": 0.6,
     "fit_pad": 0
   },
   "annotations": [
@@ -463,7 +463,7 @@ def _apply_fit(ann: dict, image_rgb: Image.Image, defaults: Optional[dict]) -> d
     mode = str(fit.get("mode", "luma")).lower()
     region = _parse_region(fit.get("region"), ann, image_rgb.size)
     min_pixels = int(fit.get("min_pixels", 30))
-    min_coverage = float(fit.get("min_coverage", 0.2))
+    min_coverage = float(fit.get("min_coverage", 0.6))
     bbox = None
     if mode == "luma":
         threshold = float(fit.get("threshold", 160))
