@@ -32,6 +32,7 @@ Spec JSON schema (minimal):
     "fit_threshold": 160,
     "fit_target": "dark",
     "fit_min_pixels": 30,
+    "fit_min_coverage": 0.2,
     "fit_pad": 0
   },
   "annotations": [
@@ -450,6 +451,8 @@ def _resolve_fit_config(ann: dict, defaults: Optional[dict]):
         config["pad"] = defaults.get("fit_pad")
     if "fit_min_pixels" in defaults:
         config["min_pixels"] = defaults.get("fit_min_pixels")
+    if "fit_min_coverage" in defaults:
+        config["min_coverage"] = defaults.get("fit_min_coverage")
     return config
 
 
@@ -460,6 +463,7 @@ def _apply_fit(ann: dict, image_rgb: Image.Image, defaults: Optional[dict]) -> d
     mode = str(fit.get("mode", "luma")).lower()
     region = _parse_region(fit.get("region"), ann, image_rgb.size)
     min_pixels = int(fit.get("min_pixels", 30))
+    min_coverage = float(fit.get("min_coverage", 0.2))
     bbox = None
     if mode == "luma":
         threshold = float(fit.get("threshold", 160))
@@ -476,6 +480,11 @@ def _apply_fit(ann: dict, image_rgb: Image.Image, defaults: Optional[dict]) -> d
     bbox = _expand_bbox(bbox, pad, image_rgb.size)
     if not bbox:
         print(f"warn: fit({mode}) did not find pixels; using original bounds", file=sys.stderr)
+        return ann
+    region_area = max(1.0, float((region[2] - region[0]) * (region[3] - region[1])))
+    bbox_area = max(1.0, float((bbox[2] - bbox[0]) * (bbox[3] - bbox[1])))
+    if bbox_area / region_area < min_coverage:
+        print(f"warn: fit({mode}) too small; using original bounds", file=sys.stderr)
         return ann
     x0, y0, x1, y1 = bbox
     updated = dict(ann)

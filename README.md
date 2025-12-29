@@ -138,7 +138,7 @@ Notes:
 - `fit` searches within the provided `x/y/w/h` region and adjusts the rect bounds to the detected pixels.
 - `fit: "luma"` finds dark (or light) pixels by threshold (default `160`). Use `{"target":"light"}` for light text.
 - `fit: {"mode":"color"}` matches a target color with `tolerance` (default `18`). Use `pad` to expand the result.
-- Optional defaults: `fit_mode`, `fit_threshold`, `fit_target`, `fit_tolerance`, `fit_color`, `fit_pad`, `fit_min_pixels`.
+- Optional defaults: `fit_mode`, `fit_threshold`, `fit_target`, `fit_tolerance`, `fit_color`, `fit_pad`, `fit_min_pixels`, `fit_min_coverage`.
 
 Auto-anchor arrows/text (optional):
 ```json
