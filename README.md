@@ -90,14 +90,52 @@ bash skills/seer/scripts/mockup_ui.sh --spec spec.json --json
 python3 skills/seer/scripts/annotate_image.py input.png output.png --spec spec.json
 ```
 
-Mockup spec example:
+Mockup spec example (supports global defaults + auto-scale for visibility):
 ```json
-[
-  {"type": "rect", "x": 120, "y": 80, "w": 160, "h": 40, "color": "#FF3B30", "width": 3},
-  {"type": "arrow", "x1": 60, "y1": 140, "x2": 120, "y2": 100, "color": "#0A84FF", "width": 3},
-  {"type": "text", "x": 130, "y": 90, "text": "Add button", "color": "#FFFFFF", "bg": "#00000080", "size": 14}
-]
+{
+  "defaults": {
+    "auto_scale": true,
+    "outline": true,
+    "text_bg": "rgba(0,0,0,0.6)"
+  },
+  "annotations": [
+    {"type": "spotlight", "x": 110, "y": 70, "w": 190, "h": 60, "radius": 10},
+    {"type": "rect", "x": 120, "y": 80, "w": 160, "h": 40, "color": "#FF3B30", "width": 3},
+    {"type": "arrow", "x1": 60, "y1": 140, "x2": 120, "y2": 100, "color": "#0A84FF", "width": 3},
+    {"type": "text", "x": 130, "y": 90, "text": "Add button", "color": "#FFFFFF", "size": 14}
+  ]
+}
 ```
+
+Auto-fit rect/spotlight bounds (optional):
+```json
+{
+  "annotations": [
+    {
+      "type": "rect",
+      "x": 80,
+      "y": 1600,
+      "w": 1000,
+      "h": 600,
+      "color": "#FF9F0A",
+      "fit": "luma"
+    },
+    {
+      "type": "rect",
+      "x": 40,
+      "y": 2600,
+      "w": 1240,
+      "h": 170,
+      "color": "#FF9F0A",
+      "fit": {"mode": "color", "color": "#CCB590", "tolerance": 18, "pad": 6}
+    }
+  ]
+}
+```
+Notes:
+- `fit` searches within the provided `x/y/w/h` region and adjusts the rect bounds to the detected pixels.
+- `fit: "luma"` finds dark (or light) pixels by threshold (default `160`). Use `{"target":"light"}` for light text.
+- `fit: {"mode":"color"}` matches a target color with `tolerance` (default `18`). Use `pad` to expand the result.
 
 Output layout (default under `.seer/`):
 - `captures/` capture images
