@@ -14,12 +14,12 @@ Keep visual state in the agent loop by comparing a current screenshot against a 
 ## Usage
 ```bash
 python3 skills/seer/scripts/compare_images.py baseline.png current.png \
-  --diff-out .seer/diffs/home-20251221.png \
-  --json-out .seer/reports/home-20251221.json
+  --diff-out .seer/loop/diffs/home-20251221.png \
+  --json-out .seer/loop/reports/home-20251221.json
 
 # If sizes differ
 python3 skills/seer/scripts/compare_images.py baseline.png current.png --resize
 ```
 
 ## Loop integration
-`loop_compare.sh` wraps `compare_images.py` and manages baselines, latest, history, diffs, and reports under `.seer/` (or `$SEER_LOOP_DIR`).
+`loop_compare.sh` wraps `compare_images.py` and manages baselines, latest, history, diffs, and reports under `.seer/loop/` (or `$SEER_LOOP_DIR`).

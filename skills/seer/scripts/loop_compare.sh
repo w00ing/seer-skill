@@ -9,7 +9,7 @@ Usage:
   loop_compare.sh [options] <current_path> <baseline_name>
 
 Options:
-  --loop-dir <path>   Override loop storage directory (default: $SEER_LOOP_DIR or .seer)
+  --loop-dir <path>   Override loop storage directory (default: $SEER_LOOP_DIR or .seer/loop)
   --resize            Resize current image to match baseline size
   --update-baseline   Replace baseline with current after comparison
   -h, --help          Show help
@@ -20,7 +20,13 @@ Behavior:
 USAGE
 }
 
-loop_dir=${SEER_LOOP_DIR:-.seer}
+out_root=${SEER_OUT_DIR:-${SEER_TMP_DIR:-.seer}}
+loop_dir=${SEER_LOOP_DIR:-"${out_root}/loop"}
+
+# Backward-compat: if the legacy layout exists and the new one doesn't, keep using legacy by default.
+if [[ -z "${SEER_LOOP_DIR:-}" && -d "${out_root}/baselines" && ! -d "${out_root}/loop/baselines" ]]; then
+  loop_dir="${out_root}"
+fi
 resize=0
 update_baseline=0
 

@@ -18,7 +18,9 @@ Full video: `assets/seer-demo.mov`
 ## Features
 
 - Precise capture of a visible macOS app window
+- Window video capture + frame extraction
 - UI mockups by annotating screenshots (arrow, rectangle, text)
+- Excalidraw scene generation (`.excalidraw`) from natural language prompts
 - Scripted visual loop support (diffs, baselines, reports)
 - Organized output layout under `.seer/` with latest artifacts
 
@@ -53,20 +55,33 @@ rsync -a /tmp/seer-skill/skills/seer/ ~/.claude/skills/seer/
 
 - Skill name: `seer`
 - Script: `skills/seer/scripts/capture_app_window.sh`
+- Script: `skills/seer/scripts/record_app_window.sh`
+- Script: `skills/seer/scripts/extract_frames.sh`
 - Script: `skills/seer/scripts/type_into_app.sh`
 - Script: `skills/seer/scripts/mockup_ui.sh`
+- Script: `skills/seer/scripts/excalidraw_from_text.py`
 - Script: `skills/seer/scripts/annotate_image.py`
-- Default output: `.seer/captures/app-window-<app>-YYYYMMDD-HHMMSS-<pid>-<rand>.png`
+- Default output: `.seer/capture/app-window-<app>-YYYYMMDD-HHMMSS-<pid>-<rand>.png`
 - Set `SEER_OUT_DIR` to change default output root (falls back to `SEER_TMP_DIR` for legacy behavior)
 - Installed paths (Codex/Claude Code): `~/.codex/skills/seer/scripts` or `~/.claude/skills/seer/scripts`
 
 ### Window capture
 
-Capture the frontmost app window (or a named process) as a precise PNG. Output is organized under `.seer/captures/` with app‑slugged filenames for easy tracking.
+Capture the frontmost app window (or a named process) as a precise PNG. Output is organized under `.seer/capture/` with app‑slugged filenames for easy tracking.
+
+### Window recording + frames
+
+Record a window region to `.mov` and extract frames for granular analysis.
 
 ### UI mockups (annotations)
 
-Create lightweight UI mockups by drawing arrows, rectangles, and text on a capture using a JSON spec. Output images live in `.seer/mockups/`, and the spec is saved alongside under `.seer/specs/`.
+Create lightweight UI mockups by drawing arrows, rectangles, and text on a capture using a JSON spec. Output images + spec + metadata are saved together under `.seer/mockup/`.
+
+### Excalidraw wireframes (NL → `.excalidraw`)
+
+Generate an Excalidraw scene file from a simple, structured natural-language prompt. By default, it will use a bundled UI component library (if present) to render nicer headers/inputs/buttons/tabs automatically.
+
+Docs: `docs/excalidraw-wireframing.md`
 
 ### Visual diff loop
 
@@ -74,13 +89,15 @@ Maintain baselines and compare current UI to previous snapshots with diffs and J
 
 ### Organized artifacts
 
-Every mockup run stores capture, spec, output, and metadata, plus a `latest/` copy per app slug for fast access.
+Every mockup run stores capture, spec, output, and metadata, plus `latest-*` convenience copies per app slug for fast access.
 
 Examples:
 ```bash
 bash skills/seer/scripts/capture_app_window.sh
 bash skills/seer/scripts/capture_app_window.sh /tmp/promptlight.png "Promptlight"
 bash skills/seer/scripts/capture_app_window.sh --help
+bash skills/seer/scripts/record_app_window.sh --duration 3 --frames --fps 20
+bash skills/seer/scripts/extract_frames.sh /tmp/recording.mov --fps 20
 bash skills/seer/scripts/type_into_app.sh --app "Promptlight" --text "hello" --enter
 bash skills/seer/scripts/type_into_app.sh --app "Promptlight" --click-rel 120,180 --text "hello"
 bash skills/seer/scripts/type_into_app.sh --text "hello" --no-activate
@@ -156,11 +173,11 @@ Notes:
 - Positions: `center`, `top`, `bottom`, `left`, `right`, `top_left`, `top_right`, `bottom_left`, `bottom_right`.
 
 Output layout (default under `.seer/`):
-- `captures/` capture images
-- `mockups/` annotated mockups
-- `specs/` JSON specs (same base name as mockup)
-- `reports/` metadata JSON for each mockup
-- `latest/` latest capture/mockup/spec per app slug
+- `capture/` window screenshots
+- `record/` window recordings + extracted frame folders
+- `mockup/` annotated mockups + their capture/spec/meta (also writes `latest-*` convenience copies)
+- `excalidraw/` generated `.excalidraw` scenes (also writes `latest-*.excalidraw`)
+- `loop/` visual regression loop storage (baselines/latest/history/diffs/reports)
 
 ## Examples (prompts)
 

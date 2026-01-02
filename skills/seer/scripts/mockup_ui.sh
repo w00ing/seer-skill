@@ -12,7 +12,7 @@ Usage:
 
 Options:
   --spec     Path to JSON spec (or - for stdin) [required]
-  --out      Output PNG path (default: .seer/mockups/mockup-<app>-<ts>-<pid>-<rand>.png)
+  --out      Output PNG path (default: .seer/mockup/mockup-<app>-<ts>-<pid>-<rand>.png)
   --process  App process name to capture (default: frontmost app)
   --input    Existing image to annotate (skip capture)
   --json     Print metadata JSON to stdout (suppresses path output)
@@ -79,6 +79,7 @@ fi
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 out_root=${SEER_OUT_DIR:-${SEER_TMP_DIR:-.seer}}
+mockup_dir="${out_root}/mockup"
 ts=$(date +%Y%m%d-%H%M%S)
 run_id="${ts}-$$-$RANDOM"
 
@@ -101,7 +102,7 @@ if [[ -z "${slug}" ]]; then
 fi
 
 if [[ -z "${input}" ]]; then
-  capture_out="${out_root}/captures/app-window-${slug}-${run_id}.png"
+  capture_out="${mockup_dir}/capture-${slug}-${run_id}.png"
   if [[ -n "${app_name}" ]]; then
     input=$(bash "${script_dir}/capture_app_window.sh" "${capture_out}" "${app_name}")
   else
@@ -109,14 +110,9 @@ if [[ -z "${input}" ]]; then
   fi
 fi
 
-spec_dir="${out_root}/specs"
-mockup_dir="${out_root}/mockups"
-report_dir="${out_root}/reports"
-latest_dir="${out_root}/latest"
+mkdir -p "${mockup_dir}"
 
-mkdir -p "${spec_dir}" "${mockup_dir}" "${report_dir}" "${latest_dir}"
-
-spec_path="${spec_dir}/spec-${slug}-${run_id}.json"
+spec_path="${mockup_dir}/spec-${slug}-${run_id}.json"
 if [[ "${spec}" == "-" ]]; then
   cat > "${spec_path}"
   spec="${spec_path}"
@@ -135,7 +131,7 @@ fi
 
 annotated_path=$(python3 "${script_dir}/annotate_image.py" "${input}" "${out}" --spec "${spec}")
 
-meta_path="${report_dir}/mockup-${slug}-${run_id}.json"
+meta_path="${mockup_dir}/mockup-${slug}-${run_id}.json"
 CAPTURE_PATH="${input}" SPEC_PATH="${spec}" OUTPUT_PATH="${annotated_path}" META_PATH="${meta_path}" \
 APP_NAME="${app_name}" APP_SLUG="${slug}" RUN_ID="${run_id}" PRINT_JSON="${print_json}" \
 python3 - <<'PY'
@@ -164,10 +160,10 @@ if os.environ.get("PRINT_JSON") == "1":
     print(json.dumps(payload))
 PY
 
-cp -f "${input}" "${latest_dir}/capture-${slug}.png"
-cp -f "${annotated_path}" "${latest_dir}/mockup-${slug}.png"
-cp -f "${spec}" "${latest_dir}/spec-${slug}.json"
-cp -f "${meta_path}" "${latest_dir}/mockup-${slug}.json"
+cp -f "${input}" "${mockup_dir}/latest-capture-${slug}.png"
+cp -f "${annotated_path}" "${mockup_dir}/latest-mockup-${slug}.png"
+cp -f "${spec}" "${mockup_dir}/latest-spec-${slug}.json"
+cp -f "${meta_path}" "${mockup_dir}/latest-mockup-${slug}.json"
 
 if [[ ${print_json} -eq 0 ]]; then
   echo "${annotated_path}"

@@ -9,7 +9,7 @@ Usage:
   capture_app_window.sh [out_path] [process_name]
 
 Defaults:
-  out_path     .seer/captures/app-window-<app>-YYYYMMDD-HHMMSS-<pid>-<rand>.png
+  out_path     .seer/capture/app-window-<app>-YYYYMMDD-HHMMSS-<pid>-<rand>.png
   process_name frontmost app
 
 Env:
@@ -24,6 +24,7 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 fi
 
 out_root=${SEER_OUT_DIR:-${SEER_TMP_DIR:-.seer}}
+captures_dir="${out_root}/capture"
 ts=$(date +%Y%m%d-%H%M%S)
 out=${1:-}
 process=${2:-}
@@ -38,7 +39,7 @@ if [[ -z "${slug}" ]]; then
 fi
 
 if [[ -z "${out}" ]]; then
-  out="${out_root}/captures/app-window-${slug}-${ts}-$$-$RANDOM.png"
+  out="${captures_dir}/app-window-${slug}-${ts}-$$-$RANDOM.png"
 fi
 
 pos=$(osascript -e "tell application \"System Events\" to tell process \"${process}\" to get position of window 1" 2>/dev/null || true)
