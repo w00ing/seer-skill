@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import random
@@ -101,12 +102,33 @@ def _slugify(value: str) -> str:
 
 
 def _now_ms() -> int:
+    if _NOW_MS is not None:
+        return _NOW_MS
     return int(time.time() * 1000)
+
+
+_NOW_MS: int | None = None
+
+
+def _stable_seed(*parts: str) -> int:
+    h = hashlib.sha256()
+    for part in parts:
+        if part is None:
+            continue
+        h.update(part.encode("utf-8"))
+        h.update(b"\0")
+    # Keep within signed 32-bit range for consistent downstream usage.
+    return int.from_bytes(h.digest()[:4], "big") & 0x7FFFFFFF
 
 
 def _new_id() -> str:
     # Excalidraw IDs are opaque strings; any unique-ish string works.
-    return uuid.uuid4().hex[:20]
+    if _ID_RNG is None:
+        return uuid.uuid4().hex[:20]
+    return f"{_ID_RNG.getrandbits(80):020x}"
+
+
+_ID_RNG: random.Random | None = None
 
 
 def _default_library_path() -> Path:
@@ -1120,11 +1142,14 @@ def _normalize_header_group(
         # Add a little left padding for leading icons (e.g., hamburger).
         left_cluster = [el for el in icon_elems if float(el.get("x") or 0) <= float(rect["x"]) + float(rect["width"]) * 0.4]
         if left_cluster:
-            lx0, _, _, _ = _bbox_for_elements(left_cluster)
+            lx0, _, lx1, _ = _bbox_for_elements(left_cluster)
             desired_left = float(rect["x"]) + builder.grid / 2
             dx = desired_left - lx0
             if abs(dx) >= 1:
                 _offset_group(left_cluster, dx=dx)
+            min_text_x = lx1 + builder.grid * 0.5 + dx
+            if float(target.get("x") or 0) < min_text_x:
+                target["x"] = float(_round_to(min_text_x, 1))
 
 
 def _set_rect_bounds(rect: dict[str, Any], *, x: float, y: float, w: float, h: float) -> None:
@@ -1544,7 +1569,21 @@ def _layout_screen(
             for idx, item in enumerate(items[:7]):
                 if idx > 0:
                     elements.append(builder.line(x=content_x + 8, y=row_y, x2=content_x + content_w - 8, y2=row_y))
-                elements.append(builder.text(x=content_x + pad, y=row_y + 8, text=item, font_size=14, color=builder.theme.text))
+                font_size = 14
+                t_w, t_h = _text_size(item, font_size)
+                baseline = int(font_size * 1.2)
+                text_y = row_y + (row_h / 2) - baseline
+                elements.append(
+                    builder.text(
+                        x=content_x + pad,
+                        y=text_y,
+                        text=item,
+                        font_size=font_size,
+                        color=builder.theme.text,
+                        width=t_w,
+                        height=t_h,
+                    )
+                )
                 row_y += row_h
             h = list_h
         else:
@@ -1616,7 +1655,10 @@ def build_scene(
     library: ExcalidrawLibrary | None,
     prefer_library: bool,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    global _ID_RNG, _NOW_MS
     rng = random.Random(seed)
+    _ID_RNG = random.Random((seed or 0) ^ 0x5EED5EED)
+    _NOW_MS = 1_700_000_000_000 + (seed or 0)
     builder = ExcalidrawBuilder(rng=rng, grid=preset.grid_size, theme=theme, fidelity=fidelity)
 
     if size:
@@ -1704,6 +1746,8 @@ def build_scene(
             "screen_height": screen_h,
         },
     }
+    _ID_RNG = None
+    _NOW_MS = None
     return scene, meta
 
 
@@ -1770,6 +1814,17 @@ def main(argv: list[str]) -> int:
     fidelity: Fidelity = args.fidelity  # type: ignore[assignment]
     strict = not args.no_strict
 
+    seed = args.seed
+    if seed is None:
+        size_label = f"{size[0]}x{size[1]}" if size else ""
+        seed = _stable_seed(
+            text,
+            preset.name,
+            size_label,
+            theme.name,
+            fidelity,
+        )
+
     library: ExcalidrawLibrary | None = None
     prefer_library = False
     if not args.no_library:
@@ -1787,7 +1842,7 @@ def main(argv: list[str]) -> int:
         size=size,
         theme=theme,
         fidelity=fidelity,
-        seed=args.seed,
+        seed=seed,
         strict=strict,
         library=library,
         prefer_library=prefer_library,
@@ -1812,6 +1867,7 @@ def main(argv: list[str]) -> int:
         "theme": theme.name,
         "fidelity": fidelity,
         "grid": preset.grid_size,
+        "seed": seed,
         "library": bool(library),
         "library_used": meta2.get("library_used"),
         "layout": meta2["layout"],
