@@ -219,7 +219,7 @@ DEFAULT_LIBRARY_COMPONENT_QUERIES: dict[str, list[str]] = {
     # Keep this conservative: only use library items that are easy to label reliably.
     "header": ["navigation bar"],
     "button": ["button", "Filled button (text only)", "Outlined button (text only)"],
-    "input": ["search", "textfield", "Search field", "Text field with placeholder", "Text field with text"],
+    "input": ["textfield", "Text field with placeholder", "Text field with text", "search", "Search field"],
     "tabs": ["tabs"],
     "dropdown": ["dropdown", "select"],
     "textarea": ["textarea"],
@@ -246,14 +246,14 @@ def _pick_library_item_for_component(
 
     # Small heuristics to pick better primitives.
     if component_type == "input" and label:
-        if "search" in label:
-            it = library.find("search") or library.find("Search field") or library.find("Search Input")
-            if it:
-                return it
         # Prefer a plain text field for non-search inputs.
         it = library.find("textfield") or library.find("Text field with placeholder") or library.find("Text field with text")
         if it:
             return it
+        if "search" in label:
+            it = library.find("search") or library.find("Search field") or library.find("Search Input")
+            if it:
+                return it
 
     if component_type == "header":
         it = library.find("navigation bar")
@@ -474,6 +474,9 @@ def _rewrite_library_label_and_placeholder(
     if label and label_targets:
         target = sorted(label_targets, key=lambda el: (float(el.get("y") or 0), -float(el.get("width") or 0)))[0]
         _set_library_text(builder, group_elements, target, label)
+    elif label_targets:
+        for el in label_targets:
+            el["opacity"] = 0
 
     if placeholder and placeholder_targets:
         # Prefer the widest placeholder.
@@ -904,6 +907,232 @@ def _fit_group_to_bounds(
     return scale
 
 
+def _offset_group(group: list[dict[str, Any]], *, dx: float = 0.0, dy: float = 0.0) -> None:
+    if not group or (dx == 0 and dy == 0):
+        return
+    for el in group:
+        if "x" in el:
+            try:
+                el["x"] = float(_round_to(float(el["x"]) + dx, 1))
+            except Exception:
+                pass
+        if "y" in el:
+            try:
+                el["y"] = float(_round_to(float(el["y"]) + dy, 1))
+            except Exception:
+                pass
+
+
+def _simplify_library_header(group: list[dict[str, Any]], *, keep_actions: bool) -> None:
+    if not group or keep_actions:
+        return
+    gx0, _, gx1, _ = _bbox_for_elements(group)
+    cutoff = gx0 + (gx1 - gx0) * 0.65
+    to_remove: list[dict[str, Any]] = []
+    for el in group:
+        if el.get("type") not in ("line", "ellipse", "diamond", "rectangle"):
+            continue
+        try:
+            if float(el.get("x") or 0) > cutoff:
+                to_remove.append(el)
+        except Exception:
+            continue
+    if to_remove:
+        for el in to_remove:
+            if el in group:
+                group.remove(el)
+
+
+def _apply_theme_to_library_group(builder: ExcalidrawBuilder, group: list[dict[str, Any]]) -> None:
+    if not group:
+        return
+    stroke = builder.theme.border
+    text_color = builder.theme.text
+    stroke_width = builder._shape_style().get("strokeWidth", 2)
+    group_label = None
+    for el in group:
+        custom = el.get("customData")
+        if isinstance(custom, dict) and custom.get("seerLabel"):
+            group_label = custom.get("seerLabel")
+            break
+    is_button = group_label == "button"
+    for el in group:
+        etype = el.get("type")
+        label = None
+        custom = el.get("customData")
+        if isinstance(custom, dict):
+            label = custom.get("seerLabel")
+        if etype == "text":
+            if is_button:
+                el["strokeColor"] = "#ffffff"
+            else:
+                el["strokeColor"] = text_color
+            continue
+        if etype in ("rectangle", "ellipse", "diamond", "line", "arrow"):
+            el["strokeColor"] = stroke
+            if "strokeWidth" in el and el["strokeWidth"] is not None:
+                el["strokeWidth"] = stroke_width
+            if is_button and etype == "rectangle":
+                if not el.get("backgroundColor") or el.get("backgroundColor") == "transparent":
+                    el["backgroundColor"] = "#1e1e1e"
+                el["fillStyle"] = "solid"
+            if etype == "rectangle" and label in ("card", "image"):
+                el["backgroundColor"] = builder.theme.container
+                el["fillStyle"] = "solid"
+                el["roundness"] = {"type": 3, "value": 8}
+
+def _normalize_input_group(
+    builder: ExcalidrawBuilder,
+    group: list[dict[str, Any]],
+    *,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+) -> None:
+    if not group:
+        return
+    rect = None
+    for el in group:
+        if el.get("type") == "rectangle" and el.get("boundElements"):
+            rect = el
+            break
+    if not rect:
+        return
+    rect["x"] = float(_round_to(x, 1))
+    rect["y"] = float(_round_to(y, 1))
+    rect["width"] = float(_round_to(w, 1))
+    rect["height"] = float(_round_to(h, 1))
+
+    # Align placeholder text inside the new bounds.
+    by_id = {el.get("id"): el for el in group if isinstance(el.get("id"), str)}
+    for b in rect.get("boundElements") or []:
+        if not isinstance(b, dict):
+            continue
+        tid = b.get("id")
+        if tid not in by_id:
+            continue
+        text_el = by_id[tid]
+        new_text = str(text_el.get("text") or "").strip()
+        if not new_text:
+            continue
+        try:
+            font_size = int(float(text_el.get("fontSize") or 14))
+        except Exception:
+            font_size = 14
+        new_w = min(int(w - builder.grid * 2), _calc_label_width(new_text, font_size))
+        new_w = max(24, new_w)
+        text_el["width"] = float(_round_to(new_w, 10))
+        text_el["height"] = float(_round_to(max(float(text_el.get("height") or 0), font_size * 1.6), 10))
+        text_el["x"] = float(_round_to(x + builder.grid, 1))
+        text_el["y"] = float(_round_to(y + (h - float(text_el["height"])) / 2, 1))
+
+
+def _normalize_card_group(
+    builder: ExcalidrawBuilder,
+    group: list[dict[str, Any]],
+    *,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+) -> None:
+    if not group:
+        return
+    rect = None
+    for el in group:
+        if el.get("type") == "rectangle" and el.get("boundElements"):
+            rect = el
+            break
+    if not rect:
+        return
+    rect["x"] = float(_round_to(x, 1))
+    rect["y"] = float(_round_to(y, 1))
+    rect["width"] = float(_round_to(w, 1))
+    rect["height"] = float(_round_to(h, 1))
+    # Re-center label text if present.
+    by_id = {el.get("id"): el for el in group if isinstance(el.get("id"), str)}
+    for b in rect.get("boundElements") or []:
+        if not isinstance(b, dict):
+            continue
+        tid = b.get("id")
+        if tid not in by_id:
+            continue
+        text_el = by_id[tid]
+        _set_library_text(builder, group, text_el, str(text_el.get("text") or ""))
+
+
+def _normalize_header_group(
+    builder: ExcalidrawBuilder,
+    group: list[dict[str, Any]],
+    *,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+) -> None:
+    if not group:
+        return
+    rect = None
+    for el in group:
+        if el.get("type") != "rectangle":
+            continue
+        custom = el.get("customData")
+        if isinstance(custom, dict) and custom.get("seerLabel") == "header":
+            rect = el
+            break
+        if rect is None:
+            rect = el
+    if not rect:
+        return
+    rect["x"] = float(_round_to(x, 1))
+    rect["y"] = float(_round_to(y, 1))
+    rect["width"] = float(_round_to(w, 1))
+    rect["height"] = float(_round_to(h, 1))
+
+    texts = [el for el in group if el.get("type") == "text" and isinstance(el.get("text"), str)]
+    if not texts:
+        return
+    target = sorted(texts, key=lambda el: (float(el.get("y") or 0), float(el.get("x") or 0)))[0]
+    new_text = str(target.get("text") or "").strip()
+    if not new_text:
+        return
+    try:
+        font_size = int(float(target.get("fontSize") or 16))
+    except Exception:
+        font_size = 16
+    new_w = min(int(w - builder.grid * 2), _calc_label_width(new_text, font_size))
+    new_w = max(24, new_w)
+    target["width"] = float(_round_to(new_w, 10))
+    target["height"] = float(_round_to(max(float(target.get("height") or 0), font_size * 1.6), 10))
+    target["textAlign"] = "left"
+    target["x"] = float(_round_to(x + builder.grid, 1))
+    target["y"] = float(_round_to(y + (h - float(target["height"])) / 2, 1))
+
+    icon_elems = [el for el in group if el.get("type") in ("line", "ellipse", "diamond", "arrow")]
+    if icon_elems:
+        ix0, iy0, ix1, iy1 = _bbox_for_elements(icon_elems)
+        icon_center = (iy0 + iy1) / 2
+        rect_center = float(rect.get("y") or y) + float(rect.get("height") or h) / 2
+        dy = rect_center - icon_center
+        if abs(dy) >= 1:
+            _offset_group(icon_elems, dy=dy)
+        # Add a little left padding for leading icons (e.g., hamburger).
+        left_cluster = [el for el in icon_elems if float(el.get("x") or 0) <= float(rect["x"]) + float(rect["width"]) * 0.4]
+        if left_cluster:
+            lx0, _, _, _ = _bbox_for_elements(left_cluster)
+            desired_left = float(rect["x"]) + builder.grid / 2
+            dx = desired_left - lx0
+            if abs(dx) >= 1:
+                _offset_group(left_cluster, dx=dx)
+
+
+def _set_rect_bounds(rect: dict[str, Any], *, x: float, y: float, w: float, h: float) -> None:
+    rect["x"] = float(_round_to(x, 1))
+    rect["y"] = float(_round_to(y, 1))
+    rect["width"] = float(_round_to(w, 1))
+    rect["height"] = float(_round_to(h, 1))
+
 def _split_items(text: str) -> list[str]:
     text = text.strip()
     if not text:
@@ -1016,32 +1245,34 @@ def _layout_screen(
     phrases: list[str],
     library: ExcalidrawLibrary | None,
     prefer_library: bool,
+    show_label: bool,
 ) -> list[dict[str, Any]]:
     g = builder.grid
     margin = g
-    gap = g * 2
+    gap = g
     pad = g
 
     elements: list[dict[str, Any]] = []
 
-    # Screen boundary + title. Keep boundary transparent to avoid overwhelming the page.
-    boundary, boundary_label = builder.labeled_rect(
+    # Screen boundary. Keep boundary transparent to avoid overwhelming the page.
+    boundary = builder.rect(
         x=screen_x,
         y=screen_y,
         w=screen_w,
         h=screen_h,
-        text=screen_name,
-        font_size=18,
         roundness=8,
         seer_label="screen",
     )
     boundary["backgroundColor"] = "transparent"
     boundary["fillStyle"] = "hachure"
-    elements.extend([boundary, boundary_label])
+    elements.append(boundary)
+    if show_label:
+        label_y = max(0, screen_y - builder.grid)
+        elements.append(builder.text(x=screen_x, y=label_y, text=screen_name, font_size=12, color=builder.theme.muted_text))
 
     content_x = screen_x + margin
     content_w = screen_w - margin * 2
-    y = screen_y + margin + 40
+    y = screen_y + margin
 
     for phrase in phrases:
         comp_type, value = _parse_component(phrase)
@@ -1067,17 +1298,17 @@ def _layout_screen(
                         label_override=None,
                         seer_label="section",
                     )
-                    _fit_group_to_bounds(builder, group, max_w=content_w, max_h=36)
+                    _fit_group_to_bounds(builder, group, max_w=content_w, max_h=28)
                     _rewrite_library_section_title(builder, group, label)
                     elements.extend(group)
                     _, _, _, by1 = _bbox_for_elements(group)
                     y = builder.snap(by1 + builder.grid)
                     used = True
             if not used:
-                elements.append(builder.text(x=content_x + pad, y=y, text=label.upper(), font_size=14, color=builder.theme.muted_text))
-                y += 24
+                elements.append(builder.text(x=content_x + pad, y=y, text=label.upper(), font_size=12, color=builder.theme.muted_text))
+                y = builder.snap(y + builder.grid)
             elements.append(builder.line(x=content_x, y=y, x2=content_x + content_w, y2=y))
-            y += gap // 2
+            y = builder.snap(y + builder.grid)
             continue
 
         if comp_type == "text":
@@ -1142,7 +1373,7 @@ def _layout_screen(
             continue
 
         height_by_type = {
-            "header": 80,
+            "header": 60,
             "tabs": 48,
             "input": 52,
             "button": 52,
@@ -1152,7 +1383,7 @@ def _layout_screen(
             "radio": 40,
             "toggle": 40,
             "card": 140,
-            "list": 220,
+            "list": 160,
             "image": 160,
             "footer": 80,
         }
@@ -1191,6 +1422,45 @@ def _layout_screen(
                     max_h = h
                 _fit_group_to_bounds(builder, group, max_w=max_w, max_h=max_h)
 
+                if comp_type == "header":
+                    _simplify_library_header(group, keep_actions=False)
+                    # If the library header has no background, add one for clarity and spacing.
+                    has_rect = any(el.get("type") == "rectangle" for el in group)
+                    if not has_rect:
+                        header_bg = builder.rect(
+                            x=content_x,
+                            y=y,
+                            w=content_w,
+                            h=h,
+                            roundness=8,
+                            seer_label="header",
+                        )
+                        _set_rect_bounds(header_bg, x=content_x, y=y, w=content_w, h=h)
+                        group.insert(0, header_bg)
+
+                if max_h:
+                    gx0, gy0, gx1, gy1 = _bbox_for_elements(group)
+                    group_h = gy1 - gy0
+                    if group_h > 0 and max_h > group_h:
+                        _offset_group(group, dy=(max_h - group_h) / 2)
+
+                _apply_theme_to_library_group(builder, group)
+
+                if comp_type == "input":
+                    _normalize_input_group(builder, group, x=content_x, y=y, w=content_w, h=h)
+
+                if comp_type == "card":
+                    _normalize_card_group(builder, group, x=content_x, y=y, w=content_w, h=h)
+
+                if comp_type == "header":
+                    _normalize_header_group(builder, group, x=content_x, y=y, w=content_w, h=h)
+
+                if comp_type in ("button", "tabs", "footer"):
+                    gx0, _, gx1, _ = _bbox_for_elements(group)
+                    group_w = gx1 - gx0
+                    if group_w > 0 and group_w < content_w:
+                        _offset_group(group, dx=(content_w - group_w) / 2)
+
                 if comp_type == "tabs":
                     tab_labels = [t.strip() for t in re.split(r"\s*\|\s*", label) if t.strip()]
                     if len(tab_labels) <= 1:
@@ -1226,7 +1496,7 @@ def _layout_screen(
                 continue
 
         if comp_type == "header":
-            rect, txt = builder.labeled_rect(x=content_x, y=y, w=content_w, h=h, text=label, font_size=22, roundness=8, seer_label="header")
+            rect, txt = builder.labeled_rect(x=content_x, y=y, w=content_w, h=h, text=label, font_size=18, roundness=8, seer_label="header")
             elements.extend([rect, txt])
         elif comp_type == "button":
             rect, txt = builder.labeled_rect(x=content_x, y=y, w=min(content_w, 320), h=h, text=label, font_size=18, roundness=6, seer_label="button")
@@ -1265,14 +1535,18 @@ def _layout_screen(
             elements.append(builder.text(x=content_x + pad, y=y + pad, text=label or "Image", font_size=16, color=builder.theme.muted_text))
         elif comp_type == "list":
             items = _split_items(label)
-            rect = builder.rect(x=content_x, y=y, w=content_w, h=h, roundness=8, seer_label="list")
+            row_h = max(builder.grid * 2, 32)
+            list_h = builder.grid * 2 + row_h * max(1, len(items))
+            rect = builder.rect(x=content_x, y=y, w=content_w, h=list_h, roundness=8, seer_label="list")
+            _set_rect_bounds(rect, x=content_x, y=y, w=content_w, h=list_h)
             elements.append(rect)
-            row_y = y + pad
+            row_y = y + builder.grid
             for idx, item in enumerate(items[:7]):
                 if idx > 0:
                     elements.append(builder.line(x=content_x + 8, y=row_y, x2=content_x + content_w - 8, y2=row_y))
-                elements.append(builder.text(x=content_x + pad, y=row_y + 10, text=item, font_size=16, color=builder.theme.text))
-                row_y += 44
+                elements.append(builder.text(x=content_x + pad, y=row_y + 8, text=item, font_size=14, color=builder.theme.text))
+                row_y += row_h
+            h = list_h
         else:
             rect, txt = builder.labeled_rect(x=content_x, y=y, w=content_w, h=h, text=label, font_size=16, roundness=8, seer_label=comp_type)
             elements.extend([rect, txt])
@@ -1361,10 +1635,9 @@ def build_scene(
     canvas_h = outer * 2 + screen_h
 
     elements: list[dict[str, Any]] = []
-    elements.append(builder.text(x=outer, y=0, text=f"wireframe ({theme.name}, {fidelity})", font_size=14, color=theme.muted_text))
-
+    show_label = False
     for idx, screen in enumerate(screens):
-        sx = outer + idx * (screen_w + hgap)
+        sx = builder.snap(outer + idx * (screen_w + hgap))
         sy = outer
         elements.extend(
             _layout_screen(
@@ -1377,6 +1650,7 @@ def build_scene(
                 phrases=screen.phrases,
                 library=library,
                 prefer_library=prefer_library,
+                show_label=show_label,
             )
         )
 
