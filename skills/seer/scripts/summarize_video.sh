@@ -72,6 +72,10 @@ sheet_cols=""
 make_gif=0
 gif_width="640"
 print_json=0
+mode_requested=""
+mode_used=""
+fallback_used=0
+gif_error=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -123,6 +127,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+mode_requested="${mode}"
+mode_used="${mode}"
+
 base=$(basename "${video}")
 slug="${base%.*}"
 
@@ -132,27 +139,32 @@ fi
 
 mkdir -p "${out_dir}"
 
-case "${mode}" in
-  scene)
-    ffmpeg -hide_banner -loglevel error -i "${video}" \
-      -vf "select='eq(n,0)+gt(scene,${scene_threshold})'" -vsync vfr \
-      "${out_dir}/frame-%04d.png"
-    ;;
-  fps)
-    ffmpeg -hide_banner -loglevel error -i "${video}" -vf "fps=${fps}" \
-      "${out_dir}/frame-%04d.png"
-    ;;
-  keyframes)
-    ffmpeg -hide_banner -loglevel error -skip_frame nokey -i "${video}" -vsync vfr \
-      "${out_dir}/frame-%04d.png"
-    ;;
-  *)
-    echo "error: unknown mode: ${mode} (use scene, fps, or keyframes)"
-    exit 1
-    ;;
-esac
+extract_frames_for_mode() {
+  local extract_mode="$1"
+  rm -f "${out_dir}"/frame-*.png
+  case "${extract_mode}" in
+    scene)
+      ffmpeg -hide_banner -loglevel error -i "${video}" \
+        -vf "select='eq(n,0)+gt(scene,${scene_threshold})'" -vsync vfr \
+        "${out_dir}/frame-%04d.png"
+      ;;
+    fps)
+      ffmpeg -hide_banner -loglevel error -i "${video}" -vf "fps=${fps}" \
+        "${out_dir}/frame-%04d.png"
+      ;;
+    keyframes)
+      ffmpeg -hide_banner -loglevel error -skip_frame nokey -i "${video}" -vsync vfr \
+        "${out_dir}/frame-%04d.png"
+      ;;
+    *)
+      echo "error: unknown mode: ${extract_mode} (use scene, fps, or keyframes)"
+      exit 1
+      ;;
+  esac
+}
 
-frame_count=$(OUT_DIR="${out_dir}" python3 - <<'PY'
+count_frames() {
+  OUT_DIR="${out_dir}" python3 - <<'PY'
 import glob
 import os
 
@@ -160,7 +172,19 @@ out_dir = os.environ.get("OUT_DIR") or ""
 frames = sorted(glob.glob(os.path.join(out_dir, "frame-*.png")))
 print(len(frames))
 PY
-)
+}
+
+extract_frames_for_mode "${mode_used}"
+
+frame_count=$(count_frames)
+
+if [[ "${mode_used}" == "scene" && "${frame_count}" -lt 2 ]]; then
+  echo "warn: scene mode produced ${frame_count} frame(s); falling back to fps=${fps}" >&2
+  mode_used="fps"
+  fallback_used=1
+  extract_frames_for_mode "${mode_used}"
+  frame_count=$(count_frames)
+fi
 
 if [[ "${frame_count}" -eq 0 ]]; then
   echo "error: no frames extracted (try lower --scene or use --mode fps)"
@@ -232,16 +256,42 @@ fi
 gif_path=""
 if [[ ${make_gif} -eq 1 ]]; then
   gif_path="${out_dir}/preview.gif"
+  gif_fps=12
+  if [[ "${frame_count}" -lt 2 ]]; then
+    gif_fps=1
+  fi
+  palette="${out_dir}/palette.png"
+  set +e
   ffmpeg -hide_banner -loglevel error -pattern_type glob -i "${out_dir}/frame-*.png" \
-    -vf "fps=12,scale=${gif_width}:-1:flags=lanczos" -loop 0 "${gif_path}"
+    -vf "fps=${gif_fps},scale=${gif_width}:-1:flags=lanczos,palettegen" -y "${palette}"
+  palette_status=$?
+  if [[ ${palette_status} -eq 0 ]]; then
+    ffmpeg -hide_banner -loglevel error -pattern_type glob -i "${out_dir}/frame-*.png" -i "${palette}" \
+      -lavfi "fps=${gif_fps},scale=${gif_width}:-1:flags=lanczos[x];[x][1:v]paletteuse" -y "${gif_path}"
+    gif_status=$?
+    if [[ ${gif_status} -ne 0 ]]; then
+      gif_error="gif encode failed (exit ${gif_status})"
+    fi
+  else
+    gif_error="gif palette generation failed (exit ${palette_status})"
+  fi
+  set -e
+  rm -f "${palette}"
+  if [[ -n "${gif_error}" || ! -s "${gif_path}" ]]; then
+    if [[ -z "${gif_error}" ]]; then
+      gif_error="gif file not created"
+    fi
+    echo "warn: ${gif_error}" >&2
+    gif_path=""
+  fi
 fi
 
 duration=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${video}" || true)
 
 if [[ ${print_json} -eq 1 ]]; then
-  VIDEO_PATH="${video}" OUT_DIR="${out_dir}" MODE="${mode}" SCENE="${scene_threshold}" FPS="${fps}" \
-  MAX_FRAMES="${max_frames}" FRAME_COUNT="${frame_count}" SHEET_PATH="${sheet_path}" GIF_PATH="${gif_path}" \
-  DURATION="${duration}" \
+  VIDEO_PATH="${video}" OUT_DIR="${out_dir}" MODE_REQUESTED="${mode_requested}" MODE_USED="${mode_used}" FALLBACK_USED="${fallback_used}" \
+  SCENE="${scene_threshold}" FPS="${fps}" MAX_FRAMES="${max_frames}" FRAME_COUNT="${frame_count}" SHEET_PATH="${sheet_path}" \
+  GIF_PATH="${gif_path}" GIF_ERROR="${gif_error}" DURATION="${duration}" \
   python3 - <<'PY'
 import json
 import os
@@ -255,13 +305,16 @@ def to_float(value):
 payload = {
     "video_path": os.path.abspath(os.environ.get("VIDEO_PATH") or ""),
     "frames_dir": os.path.abspath(os.environ.get("OUT_DIR") or ""),
-    "mode": os.environ.get("MODE") or None,
+    "mode_requested": os.environ.get("MODE_REQUESTED") or None,
+    "mode_used": os.environ.get("MODE_USED") or None,
+    "fallback_used": os.environ.get("FALLBACK_USED") == "1",
     "scene_threshold": to_float(os.environ.get("SCENE")),
     "fps": to_float(os.environ.get("FPS")),
     "max_frames": int(os.environ.get("MAX_FRAMES") or 0),
     "frame_count": int(os.environ.get("FRAME_COUNT") or 0),
     "sheet_path": os.path.abspath(os.environ.get("SHEET_PATH") or "") if os.environ.get("SHEET_PATH") else None,
     "gif_path": os.path.abspath(os.environ.get("GIF_PATH") or "") if os.environ.get("GIF_PATH") else None,
+    "gif_error": os.environ.get("GIF_ERROR") or None,
     "duration": to_float(os.environ.get("DURATION")),
 }
 print(json.dumps(payload))

@@ -8,7 +8,8 @@ record_app_window.sh
 Record a macOS app window as a .mov using screencapture.
 
 Usage:
-  record_app_window.sh [--out <video.mov>] [--process <app_name>] [--duration <sec>] [--frames] [--fps <n>] [--frames-dir <dir>]
+  record_app_window.sh [--out <video.mov>] [--process <app_name>] [--simulator] [--activate] [--no-activate]
+                       [--duration <sec>] [--frames] [--fps <n>] [--frames-dir <dir>]
                        [--summary] [--summary-mode <scene|fps|keyframes>] [--summary-scene <threshold>] [--summary-fps <n>]
                        [--summary-max <n>] [--summary-out <dir>] [--summary-sheet] [--summary-sheet-cols <n>]
                        [--summary-gif] [--summary-gif-width <px>] [--json]
@@ -16,6 +17,9 @@ Usage:
 Options:
   --out         Output video path (default: .seer/record/app-window-<app>-<ts>-<pid>-<rand>.mov)
   --process     App process name to capture (default: frontmost app)
+  --simulator   Convenience flag for iOS Simulator (same as --process Simulator)
+  --activate    Activate target app before recording
+  --no-activate Do not activate target app (default: auto-activate when --process/--simulator is used)
   --duration    Recording duration in seconds (default: 3)
   --frames      Extract frames after recording
   --fps         Frames per second for extraction (default: 10)
@@ -69,6 +73,9 @@ summary_sheet_cols=""
 summary_gif=0
 summary_gif_width="640"
 print_json=0
+activate=0
+activate_set=0
+process_set=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -78,7 +85,26 @@ while [[ $# -gt 0 ]]; do
       ;;
     --process)
       process="${2:-}"
+      process_set=1
       shift 2
+      ;;
+    --simulator)
+      process="Simulator"
+      process_set=1
+      if [[ ${activate_set} -eq 0 ]]; then
+        activate=1
+      fi
+      shift
+      ;;
+    --activate)
+      activate=1
+      activate_set=1
+      shift
+      ;;
+    --no-activate)
+      activate=0
+      activate_set=1
+      shift
       ;;
     --duration)
       duration="${2:-}"
@@ -148,8 +174,21 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+frontmost=$(osascript -e 'tell application "System Events" to get name of first process whose frontmost is true' 2>/dev/null || true)
+
 if [[ -z "${process}" ]]; then
-  process=$(osascript -e 'tell application "System Events" to get name of first process whose frontmost is true' 2>/dev/null || true)
+  process="${frontmost}"
+elif [[ ${activate_set} -eq 0 ]]; then
+  activate=1
+fi
+
+if [[ -n "${process}" && -n "${frontmost}" && "${process}" != "${frontmost}" ]]; then
+  echo "note: frontmost app is '${frontmost}', targeting '${process}'" >&2
+fi
+
+if [[ ${activate} -eq 1 && -n "${process}" ]]; then
+  osascript -e "tell application \"${process}\" to activate" >/dev/null 2>&1 || true
+  sleep 0.2
 fi
 
 slug=$(echo "${process}" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd 'a-z0-9._-')
@@ -184,6 +223,14 @@ h=${size#*,}
 
 mkdir -p "$(dirname "${out}")"
 
+echo "seer: app='${process}' out='${out}' duration=${duration}s bounds=${x},${y},${w},${h}" >&2
+if [[ ${extract_frames} -eq 1 ]]; then
+  echo "seer: frames -> ${frames_dir} (fps=${fps})" >&2
+fi
+if [[ ${run_summary} -eq 1 ]]; then
+  echo "seer: summary -> mode=${summary_mode} max=${summary_max}" >&2
+fi
+
 screencapture -x -v -R "${x},${y},${w},${h}" -V "${duration}" "${out}"
 
 frames_out=""
@@ -201,6 +248,7 @@ summary_json=""
 summary_dir=""
 summary_sheet_path=""
 summary_gif_path=""
+summary_error=""
 if [[ ${run_summary} -eq 1 ]]; then
   script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
   summary_script="${script_dir}/summarize_video.sh"
@@ -227,17 +275,30 @@ if [[ ${run_summary} -eq 1 ]]; then
   fi
 
   if [[ ${print_json} -eq 1 ]]; then
+    set +e
     summary_json=$("${summary_script}" "${summary_args[@]}" --json)
+    summary_status=$?
+    set -e
   else
-    mapfile -t summary_lines < <("${summary_script}" "${summary_args[@]}")
+    set +e
+    summary_lines=()
+    while IFS= read -r line; do
+      summary_lines+=("${line}")
+    done < <("${summary_script}" "${summary_args[@]}")
+    summary_status=$?
+    set -e
     summary_dir="${summary_lines[0]:-}"
     summary_sheet_path="${summary_lines[1]:-}"
     summary_gif_path="${summary_lines[2]:-}"
   fi
+  if [[ ${summary_status:-0} -ne 0 ]]; then
+    summary_error="summarize_video.sh failed (exit ${summary_status})"
+    echo "warn: ${summary_error}" >&2
+  fi
 fi
 
 if [[ ${print_json} -eq 1 ]]; then
-  VIDEO_PATH="${out}" FRAMES_DIR="${frames_out}" APP_NAME="${process}" APP_SLUG="${slug}" DURATION="${duration}" FPS="${fps}" SUMMARY_JSON="${summary_json}" \
+  VIDEO_PATH="${out}" FRAMES_DIR="${frames_out}" APP_NAME="${process}" APP_SLUG="${slug}" DURATION="${duration}" FPS="${fps}" SUMMARY_JSON="${summary_json}" SUMMARY_ERROR="${summary_error}" \
   python3 - <<'PY'
 import json
 import os
@@ -256,6 +317,7 @@ payload = {
     "video_path": os.path.abspath(os.environ.get("VIDEO_PATH") or ""),
     "frames_dir": os.path.abspath(os.environ.get("FRAMES_DIR") or "") if os.environ.get("FRAMES_DIR") else None,
     "summary": summary,
+    "summary_error": os.environ.get("SUMMARY_ERROR") or None,
 }
 print(json.dumps(payload))
 PY

@@ -15,6 +15,7 @@ Capture a precise screenshot of a visible app window, annotate it for quick UI m
    - `bash scripts/capture_app_window.sh /path/to/out.png "Promptlight"` (custom output + process name)
 3. (Optional) Record video + extract frames:
    - `bash scripts/record_app_window.sh --duration 3 --frames --fps 20`
+   - `bash scripts/record_simulator.sh --duration 3 --summary --summary-sheet --summary-gif`
    - `bash scripts/record_screen.sh --duration 3`
    - `bash scripts/extract_frames.sh /path/to/video.mov --fps 20`
    - `bash scripts/record_app_window.sh --duration 3 --summary --summary-sheet --summary-gif`
@@ -40,6 +41,8 @@ Capture a precise screenshot of a visible app window, annotate it for quick UI m
 - `bash scripts/record_app_window.sh --help`
 - `bash scripts/record_app_window.sh --duration 3 --frames --fps 20`
 - `bash scripts/record_app_window.sh --duration 3 --summary --summary-mode scene --summary-max 24 --summary-sheet --summary-gif`
+- `bash scripts/record_app_window.sh --simulator --duration 3 --summary --summary-sheet`
+- `bash scripts/record_simulator.sh --duration 3 --summary --summary-sheet`
 - `bash scripts/record_screen.sh --help`
 - `bash scripts/record_screen.sh --duration 3 --display 1`
 - `bash scripts/record_screen.sh --duration 3 --region 100,100,800,600`
@@ -69,8 +72,10 @@ Capture a precise screenshot of a visible app window, annotate it for quick UI m
    - If it fails, rerun with explicit process name or verify permissions.
 2. **Record (optional)**
    - `scripts/record_app_window.sh --duration 3 --frames --fps 20`
+   - `scripts/record_simulator.sh --duration 3 --summary --summary-sheet`
    - `scripts/record_screen.sh --duration 3`
    - Use frames for granular UI change analysis.
+   - `record_app_window.sh` auto-activates when `--process/--simulator` is used and warns if frontmost app differs.
 3. **Compare (optional)**
    - `scripts/loop_compare.sh <current_path> <baseline_name>`
    - Stores `baselines/`, `latest/`, `history/`, `diffs/`, `reports/` under `.seer/loop` (or `$SEER_LOOP_DIR`)
@@ -94,9 +99,10 @@ Capture a precise screenshot of a visible app window, annotate it for quick UI m
 ### scripts/
 - `capture_app_window.sh`: grabs window bounds via System Events and runs `screencapture -x -R`.
 - `record_app_window.sh`: records a window region to `.mov` via `screencapture -v` (optionally extracts frames).
+- `record_simulator.sh`: convenience wrapper for iOS Simulator recording.
 - `record_screen.sh`: records full screen or a region to `.mov` via `screencapture -v`.
 - `extract_frames.sh`: extracts frames from a video via `ffmpeg`.
-- `summarize_video.sh`: extracts representative frames (scene/fps/keyframes) + optional contact sheet or GIF.
+- `summarize_video.sh`: extracts representative frames (scene/fps/keyframes) + optional contact sheet or GIF (falls back to fps when scene yields too few frames).
 - `type_into_app.sh`: focuses app and types text via System Events keystrokes.
 - `excalidraw_from_text.py`: converts a natural-language-ish prompt into a `.excalidraw` scene file under `.seer/excalidraw/` (supports `screen: Name` for multi-screen; uses the bundled Excalidraw library when present).
 - `annotate_image.py`: draws arrows, rectangles, and text on an image (requires `python3 -m pip install pillow`).
