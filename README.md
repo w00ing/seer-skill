@@ -56,6 +56,7 @@ rsync -a /tmp/seer-skill/skills/seer/ ~/.claude/skills/seer/
 - Skill name: `seer`
 - Script: `skills/seer/scripts/capture_app_window.sh`
 - Script: `skills/seer/scripts/record_app_window.sh`
+- Script: `skills/seer/scripts/record_screen.sh`
 - Script: `skills/seer/scripts/extract_frames.sh`
 - Script: `skills/seer/scripts/summarize_video.sh`
 - Script: `skills/seer/scripts/type_into_app.sh`
@@ -73,6 +74,10 @@ Capture the frontmost app window (or a named process) as a precise PNG. Output i
 ### Window recording + frames
 
 Record a window region to `.mov` and extract frames for granular analysis.
+
+### Screen recording
+
+Record the full screen (or a specified region/display) to `.mov`.
 
 ### Video summary (representative frames)
 
@@ -113,6 +118,9 @@ bash skills/seer/scripts/capture_app_window.sh
 bash skills/seer/scripts/capture_app_window.sh /tmp/promptlight.png "Promptlight"
 bash skills/seer/scripts/capture_app_window.sh --help
 bash skills/seer/scripts/record_app_window.sh --duration 3 --frames --fps 20
+bash skills/seer/scripts/record_screen.sh --duration 3
+bash skills/seer/scripts/record_screen.sh --duration 3 --display 1
+bash skills/seer/scripts/record_screen.sh --duration 3 --region 100,100,800,600
 bash skills/seer/scripts/record_app_window.sh --duration 3 --summary --summary-mode scene --summary-max 24 --summary-sheet --summary-gif
 bash skills/seer/scripts/extract_frames.sh /tmp/recording.mov --fps 20
 bash skills/seer/scripts/summarize_video.sh /tmp/recording.mov --mode scene --sheet --gif
