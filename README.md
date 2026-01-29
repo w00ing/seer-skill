@@ -57,6 +57,7 @@ rsync -a /tmp/seer-skill/skills/seer/ ~/.claude/skills/seer/
 - Script: `skills/seer/scripts/capture_app_window.sh`
 - Script: `skills/seer/scripts/record_app_window.sh`
 - Script: `skills/seer/scripts/extract_frames.sh`
+- Script: `skills/seer/scripts/summarize_video.sh`
 - Script: `skills/seer/scripts/type_into_app.sh`
 - Script: `skills/seer/scripts/mockup_ui.sh`
 - Script: `skills/seer/scripts/excalidraw_from_text.py`
@@ -72,6 +73,21 @@ Capture the frontmost app window (or a named process) as a precise PNG. Output i
 ### Window recording + frames
 
 Record a window region to `.mov` and extract frames for granular analysis.
+
+### Video summary (representative frames)
+
+Extract representative frames from a video using scene detection, keyframes, or fixed FPS. Optionally render a contact sheet or preview GIF.
+
+Summary flags (when using `record_app_window.sh --summary`):
+- `--summary-mode <scene|fps|keyframes>`: selection strategy (default: `scene`)
+- `--summary-scene <threshold>`: scene-change sensitivity (default: `0.30`)
+- `--summary-fps <n>`: sampling rate for `fps` mode (default: `2`)
+- `--summary-max <n>`: cap frame count (default: `24`, `0` disables cap)
+- `--summary-out <dir>`: output folder
+- `--summary-sheet`: create `sheet.png` contact sheet
+- `--summary-sheet-cols <n>`: contact sheet columns (default: auto)
+- `--summary-gif`: create `preview.gif`
+- `--summary-gif-width <px>`: GIF max width (default: `640`)
 
 ### UI mockups (annotations)
 
@@ -97,7 +113,9 @@ bash skills/seer/scripts/capture_app_window.sh
 bash skills/seer/scripts/capture_app_window.sh /tmp/promptlight.png "Promptlight"
 bash skills/seer/scripts/capture_app_window.sh --help
 bash skills/seer/scripts/record_app_window.sh --duration 3 --frames --fps 20
+bash skills/seer/scripts/record_app_window.sh --duration 3 --summary --summary-mode scene --summary-max 24 --summary-sheet --summary-gif
 bash skills/seer/scripts/extract_frames.sh /tmp/recording.mov --fps 20
+bash skills/seer/scripts/summarize_video.sh /tmp/recording.mov --mode scene --sheet --gif
 bash skills/seer/scripts/type_into_app.sh --app "Promptlight" --text "hello" --enter
 bash skills/seer/scripts/type_into_app.sh --app "Promptlight" --click-rel 120,180 --text "hello"
 bash skills/seer/scripts/type_into_app.sh --text "hello" --no-activate

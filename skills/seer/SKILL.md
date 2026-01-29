@@ -16,6 +16,8 @@ Capture a precise screenshot of a visible app window, annotate it for quick UI m
 3. (Optional) Record video + extract frames:
    - `bash scripts/record_app_window.sh --duration 3 --frames --fps 20`
    - `bash scripts/extract_frames.sh /path/to/video.mov --fps 20`
+   - `bash scripts/record_app_window.sh --duration 3 --summary --summary-sheet --summary-gif`
+   - `bash scripts/summarize_video.sh /path/to/video.mov --mode scene --sheet --gif`
 4. (Optional) Create a mockup with annotations:
    - `bash scripts/mockup_ui.sh --spec spec.json`
    - `bash scripts/mockup_ui.sh --spec spec.json --json`
@@ -36,8 +38,11 @@ Capture a precise screenshot of a visible app window, annotate it for quick UI m
 - `bash scripts/type_into_app.sh --text "hello" --no-activate`
 - `bash scripts/record_app_window.sh --help`
 - `bash scripts/record_app_window.sh --duration 3 --frames --fps 20`
+- `bash scripts/record_app_window.sh --duration 3 --summary --summary-mode scene --summary-max 24 --summary-sheet --summary-gif`
 - `bash scripts/extract_frames.sh --help`
 - `bash scripts/extract_frames.sh /path/to/video.mov --fps 20`
+- `bash scripts/summarize_video.sh --help`
+- `bash scripts/summarize_video.sh /path/to/video.mov --mode scene --sheet --gif`
 - `bash scripts/mockup_ui.sh --help`
 - `bash scripts/mockup_ui.sh --spec spec.json`
 - `bash scripts/mockup_ui.sh --spec spec.json --json`
@@ -69,11 +74,23 @@ Capture a precise screenshot of a visible app window, annotate it for quick UI m
 5. **Iterate**
    - Repeat after UI changes or window repositioning.
 
+## Video summary flags (record_app_window.sh --summary)
+- `--summary-mode <scene|fps|keyframes>`: selection strategy (default: `scene`)
+- `--summary-scene <threshold>`: scene-change sensitivity (default: `0.30`)
+- `--summary-fps <n>`: sampling rate for `fps` mode (default: `2`)
+- `--summary-max <n>`: cap frame count (default: `24`, `0` disables cap)
+- `--summary-out <dir>`: output folder
+- `--summary-sheet`: create `sheet.png` contact sheet
+- `--summary-sheet-cols <n>`: contact sheet columns (default: auto)
+- `--summary-gif`: create `preview.gif`
+- `--summary-gif-width <px>`: GIF max width (default: `640`)
+
 ## Resources
 ### scripts/
 - `capture_app_window.sh`: grabs window bounds via System Events and runs `screencapture -x -R`.
 - `record_app_window.sh`: records a window region to `.mov` via `screencapture -v` (optionally extracts frames).
 - `extract_frames.sh`: extracts frames from a video via `ffmpeg`.
+- `summarize_video.sh`: extracts representative frames (scene/fps/keyframes) + optional contact sheet or GIF.
 - `type_into_app.sh`: focuses app and types text via System Events keystrokes.
 - `excalidraw_from_text.py`: converts a natural-language-ish prompt into a `.excalidraw` scene file under `.seer/excalidraw/` (supports `screen: Name` for multi-screen; uses the bundled Excalidraw library when present).
 - `annotate_image.py`: draws arrows, rectangles, and text on an image (requires `python3 -m pip install pillow`).
@@ -89,6 +106,7 @@ Capture a precise screenshot of a visible app window, annotate it for quick UI m
 Under `.seer/`:
 - `capture/` window screenshots
 - `record/` window recordings + extracted frame folders
+- `record/` video summaries + contact sheets/GIFs
 - `mockup/` annotated mockups + their capture/spec/meta (also writes `latest-*` convenience copies)
 - `excalidraw/` generated `.excalidraw` scenes (also writes `latest-*.excalidraw`)
 - `loop/` visual regression loop storage (baselines/latest/history/diffs/reports)
