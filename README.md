@@ -19,6 +19,7 @@ Full video: `assets/seer-demo.mov`
 
 - Precise capture of a visible macOS app window
 - Window video capture + frame extraction
+- ffmpeg-backed full-display recording with manual stop for long QA runs
 - UI mockups by annotating screenshots (arrow, rectangle, text)
 - Excalidraw scene generation (`.excalidraw`) from natural language prompts
 - Scripted visual loop support (diffs, baselines, reports)
@@ -77,7 +78,7 @@ Record a window region to `.mov` and extract frames for granular analysis.
 
 ### Screen recording
 
-Record the full screen (or a specified region/display) to `.mov`.
+Record the full screen (or a specified region/display) to `.mov`, or use ffmpeg for direct `.mp4` capture with manual stop.
 
 ### Video summary (representative frames)
 
@@ -121,6 +122,8 @@ bash skills/seer/scripts/record_app_window.sh --duration 3 --frames --fps 20
 bash skills/seer/scripts/record_screen.sh --duration 3
 bash skills/seer/scripts/record_screen.sh --duration 3 --display 1
 bash skills/seer/scripts/record_screen.sh --duration 3 --region 100,100,800,600
+bash skills/seer/scripts/record_screen.sh --engine ffmpeg --manual-stop --capture-cursor --capture-clicks
+bash skills/seer/scripts/record_screen.sh --engine ffmpeg --device-index 1 --duration 20
 bash skills/seer/scripts/record_app_window.sh --duration 3 --summary --summary-mode scene --summary-max 24 --summary-sheet --summary-gif
 bash skills/seer/scripts/extract_frames.sh /tmp/recording.mov --fps 20
 bash skills/seer/scripts/summarize_video.sh /tmp/recording.mov --mode scene --sheet --gif

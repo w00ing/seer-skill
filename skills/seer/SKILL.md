@@ -1,6 +1,6 @@
 ---
 name: seer
-description: Visual feedback capture for any running macOS app window via osascript + screencapture. Use when the user wants UI verification or a fresh screenshot.
+description: Visual feedback capture for any running macOS app window via osascript plus screencapture/ffmpeg screen capture. Use when the user wants UI verification or a fresh screenshot.
 ---
 
 # Seer
@@ -17,6 +17,7 @@ Capture a precise screenshot of a visible app window, annotate it for quick UI m
    - `bash scripts/record_app_window.sh --duration 3 --frames --fps 20`
    - `bash scripts/record_simulator.sh --duration 3 --summary --summary-sheet --summary-gif`
    - `bash scripts/record_screen.sh --duration 3`
+   - `bash scripts/record_screen.sh --engine ffmpeg --manual-stop --capture-cursor --capture-clicks`
    - `bash scripts/extract_frames.sh /path/to/video.mov --fps 20`
    - `bash scripts/record_app_window.sh --duration 3 --summary --summary-sheet --summary-gif`
    - `bash scripts/summarize_video.sh /path/to/video.mov --mode scene --sheet --gif`
@@ -46,6 +47,8 @@ Capture a precise screenshot of a visible app window, annotate it for quick UI m
 - `bash scripts/record_screen.sh --help`
 - `bash scripts/record_screen.sh --duration 3 --display 1`
 - `bash scripts/record_screen.sh --duration 3 --region 100,100,800,600`
+- `bash scripts/record_screen.sh --engine ffmpeg --manual-stop --capture-cursor --capture-clicks`
+- `bash scripts/record_screen.sh --engine ffmpeg --device-index 1 --duration 20`
 - `bash scripts/extract_frames.sh --help`
 - `bash scripts/extract_frames.sh /path/to/video.mov --fps 20`
 - `bash scripts/summarize_video.sh --help`
@@ -74,6 +77,7 @@ Capture a precise screenshot of a visible app window, annotate it for quick UI m
    - `scripts/record_app_window.sh --duration 3 --frames --fps 20`
    - `scripts/record_simulator.sh --duration 3 --summary --summary-sheet`
    - `scripts/record_screen.sh --duration 3`
+   - For long QA runs, prefer `scripts/record_screen.sh --engine ffmpeg --manual-stop`.
    - Use frames for granular UI change analysis.
    - `record_app_window.sh` auto-activates when `--process/--simulator` is used and warns if frontmost app differs.
 3. **Compare (optional)**
@@ -100,7 +104,7 @@ Capture a precise screenshot of a visible app window, annotate it for quick UI m
 - `capture_app_window.sh`: grabs window bounds via System Events and runs `screencapture -x -R`.
 - `record_app_window.sh`: records a window region to `.mov` via `screencapture -v` (optionally extracts frames).
 - `record_simulator.sh`: convenience wrapper for iOS Simulator recording.
-- `record_screen.sh`: records full screen or a region to `.mov` via `screencapture -v`.
+- `record_screen.sh`: records full screen or a region via `screencapture` or `ffmpeg` (`avfoundation`).
 - `extract_frames.sh`: extracts frames from a video via `ffmpeg`.
 - `summarize_video.sh`: extracts representative frames (scene/fps/keyframes) + optional contact sheet or GIF (falls back to fps when scene yields too few frames).
 - `type_into_app.sh`: focuses app and types text via System Events keystrokes.
