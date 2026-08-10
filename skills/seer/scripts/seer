@@ -1,0 +1,295 @@
+#!/usr/bin/env python3
+import argparse
+import importlib.util
+import json
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+
+SCRIPTS = Path(__file__).resolve().parent
+ACCESSIBILITY_APPLESCRIPT = """
+tell application "System Events"
+  repeat with targetProcess in (application processes whose visible is true)
+    try
+      if (count of windows of targetProcess) > 0 then
+        set ignoredPosition to position of window 1 of targetProcess
+        set ignoredSize to size of window 1 of targetProcess
+        return name of targetProcess
+      end if
+    end try
+  end repeat
+  error "no accessible visible window"
+end tell
+"""
+WINDOWS_JXA = r"""
+function run() {
+  const events = Application("System Events");
+  const result = [];
+  const seen = {};
+  let visibleProcesses = 0;
+  let accessibleProcesses = 0;
+  let skippedProcesses = 0;
+  let skippedWindows = 0;
+  let frontmostProcess = null;
+  for (const process of events.applicationProcesses()) {
+    try {
+      if (!process.visible()) continue;
+      const pid = process.unixId();
+      if (seen[pid]) continue;
+      seen[pid] = true;
+      visibleProcesses++;
+      const processName = process.name();
+      const frontmost = process.frontmost();
+      if (frontmost) frontmostProcess = processName;
+      const windows = process.windows();
+      accessibleProcesses++;
+      for (let index = 0; index < windows.length; index++) {
+        try {
+          const window = windows[index];
+          const position = window.position();
+          const size = window.size();
+          if (size[0] <= 0 || size[1] <= 0) continue;
+          result.push({
+            process: processName,
+            index: index + 1,
+            title: window.name() || "",
+            frontmost: frontmost,
+            bounds: {
+              x: position[0],
+              y: position[1],
+              width: size[0],
+              height: size[1]
+            }
+          });
+        } catch (_) {
+          skippedWindows++;
+        }
+      }
+    } catch (_) {
+      skippedProcesses++;
+    }
+  }
+  return JSON.stringify({
+    windows: result,
+    visible_processes: visibleProcesses,
+    accessible_processes: accessibleProcesses,
+    skipped_processes: skippedProcesses,
+    skipped_windows: skippedWindows,
+    frontmost_process: frontmostProcess
+  });
+}
+"""
+
+
+def emit(payload: dict) -> None:
+    print(json.dumps(payload, separators=(",", ":")))
+
+
+def run(command: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(command, capture_output=True, text=True)
+
+
+def forward_stderr(result: subprocess.CompletedProcess[str]) -> None:
+    if result.stderr:
+        sys.stderr.write(result.stderr)
+
+
+def fail(message: str) -> int:
+    print(f"error: {message}", file=sys.stderr)
+    return 2
+
+
+def window_snapshot(osascript: str):
+    result = run([osascript, "-l", "JavaScript", "-e", WINDOWS_JXA])
+    if result.returncode != 0:
+        return None, result
+    try:
+        snapshot = json.loads(result.stdout)
+        if not isinstance(snapshot, dict) or not isinstance(snapshot.get("windows"), list):
+            raise ValueError
+        for key in (
+            "visible_processes",
+            "accessible_processes",
+            "skipped_processes",
+            "skipped_windows",
+        ):
+            if not isinstance(snapshot.get(key), int):
+                raise ValueError
+    except (json.JSONDecodeError, ValueError):
+        return None, result
+    return snapshot, result
+
+
+def doctor(_: argparse.Namespace) -> int:
+    platform_ok = sys.platform == "darwin"
+    osascript = shutil.which("osascript")
+    screencapture = shutil.which("screencapture")
+    pillow = importlib.util.find_spec("PIL") is not None
+    frontmost = None
+
+    if platform_ok and osascript:
+        result = run([osascript, "-e", ACCESSIBILITY_APPLESCRIPT])
+        if result.returncode == 0 and result.stdout.strip():
+            frontmost = result.stdout.strip()
+
+    accessibility = frontmost is not None
+
+    ready = platform_ok and bool(osascript) and bool(screencapture) and pillow and accessibility
+    payload = {
+        "schema_version": 1,
+        "operation": "doctor",
+        "status": "pass" if ready else "error",
+        "capabilities": {
+            "platform": {"available": platform_ok, "value": sys.platform},
+            "window_query": {
+                "available": bool(osascript),
+                "authorized": accessibility,
+            },
+            "screen_capture": {
+                "available": bool(screencapture),
+                "permission": "checked_on_capture",
+            },
+            "image_diff": {"available": pillow},
+            "video": {
+                "available": bool(shutil.which("ffmpeg") and shutil.which("ffprobe")),
+                "required": False,
+            },
+        },
+        "frontmost_process": frontmost,
+    }
+    emit(payload)
+    if not ready:
+        print("error: Seer is not ready; inspect the doctor capability report", file=sys.stderr)
+        return 2
+    return 0
+
+
+def windows(_: argparse.Namespace) -> int:
+    if sys.platform != "darwin":
+        return fail("window discovery requires macOS")
+    osascript = shutil.which("osascript")
+    if not osascript:
+        return fail("osascript not found")
+
+    snapshot, result = window_snapshot(osascript)
+    if snapshot is None:
+        forward_stderr(result)
+        return fail("window discovery returned invalid data")
+    if snapshot["visible_processes"] and not snapshot["accessible_processes"]:
+        return fail("window discovery requires Accessibility permission")
+
+    emit(
+        {
+            "schema_version": 1,
+            "operation": "windows",
+            "status": "pass",
+            "partial": bool(snapshot["skipped_processes"] or snapshot["skipped_windows"]),
+            "processes_skipped": snapshot["skipped_processes"],
+            "windows_skipped": snapshot["skipped_windows"],
+            "windows": snapshot["windows"],
+        }
+    )
+    return 0
+
+
+def capture(args: argparse.Namespace) -> int:
+    command = ["bash", str(SCRIPTS / "capture_app_window.sh"), "--"]
+    if args.out or args.process:
+        command.append(args.out or "")
+    if args.process:
+        command.append(args.process)
+
+    result = run(command)
+    forward_stderr(result)
+    if result.returncode != 0:
+        return 2
+    output = result.stdout.strip()
+    if not output:
+        return fail("capture did not return an image path")
+    current = Path(output).expanduser().resolve()
+    if not current.is_file():
+        return fail(f"capture did not create an image: {current}")
+
+    emit(
+        {
+            "schema_version": 1,
+            "operation": "capture",
+            "status": "pass",
+            "process": args.process,
+            "artifacts": {"current": str(current)},
+        }
+    )
+    return 0
+
+
+def verify(args: argparse.Namespace) -> int:
+    command = ["bash", str(SCRIPTS / "loop_compare.sh")]
+    if args.loop_dir:
+        command.extend(["--loop-dir", args.loop_dir])
+    if args.resize:
+        command.append("--resize")
+    if args.max_diff_percent is not None:
+        command.extend(["--max-diff-percent", args.max_diff_percent])
+    if args.create_baseline:
+        command.append("--create-baseline")
+    if args.update_baseline:
+        command.append("--update-baseline")
+    command.extend(["--", args.current, args.baseline])
+
+    result = run(command)
+    forward_stderr(result)
+    if result.returncode == 2:
+        return 2
+    if result.returncode not in (0, 1, 3):
+        return fail(f"verification failed with unexpected exit {result.returncode}")
+    try:
+        payload = json.loads(result.stdout)
+        if not isinstance(payload, dict):
+            raise ValueError
+    except (json.JSONDecodeError, ValueError):
+        return fail("verification returned invalid data")
+
+    emit(payload)
+    return result.returncode
+
+
+def parser() -> argparse.ArgumentParser:
+    root = argparse.ArgumentParser(description="Machine-readable visual verification for macOS agents.")
+    commands = root.add_subparsers(dest="command", required=True)
+
+    doctor_parser = commands.add_parser("doctor", help="Check required capabilities")
+    doctor_parser.add_argument("--json", action="store_true", help="Emit JSON (default)")
+    doctor_parser.set_defaults(handler=doctor)
+
+    windows_parser = commands.add_parser("windows", help="List visible app windows")
+    windows_parser.add_argument("--json", action="store_true", help="Emit JSON (default)")
+    windows_parser.set_defaults(handler=windows)
+
+    capture_parser = commands.add_parser("capture", help="Capture an app's first visible window")
+    capture_parser.add_argument("--process", help="Exact app process name (default: frontmost)")
+    capture_parser.add_argument("--out", help="Output PNG path")
+    capture_parser.add_argument("--json", action="store_true", help="Emit JSON (default)")
+    capture_parser.set_defaults(handler=capture)
+
+    verify_parser = commands.add_parser("verify", help="Compare an image with an approved baseline")
+    verify_parser.add_argument("current", help="Current PNG path")
+    verify_parser.add_argument("baseline", help="Baseline name")
+    verify_parser.add_argument("--loop-dir", help="Override visual loop storage")
+    verify_parser.add_argument("--resize", action="store_true", help="Resize current to baseline size")
+    verify_parser.add_argument("--max-diff-percent", help="Allowed changed pixels, 0-100 (default: 0)")
+    verify_parser.add_argument("--create-baseline", action="store_true", help="Create a missing baseline")
+    verify_parser.add_argument("--update-baseline", action="store_true", help="Replace an existing baseline")
+    verify_parser.add_argument("--json", action="store_true", help="Emit JSON (default)")
+    verify_parser.set_defaults(handler=verify)
+    return root
+
+
+def main() -> int:
+    args = parser().parse_args()
+    return args.handler(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

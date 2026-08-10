@@ -37,6 +37,112 @@ class SmokeTests(unittest.TestCase):
             text=True,
         )
 
+    def run_cli(
+        self, *args: str, cwd: Path, env: dict[str, str]
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(SCRIPTS / "seer"), *args],
+            cwd=cwd,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_cli_machine_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            bin_dir = work / "bin"
+            bin_dir.mkdir()
+            source = work / "source.png"
+            current = work / "current.png"
+            loop_dir = work / "loop"
+            Image.new("RGB", (4, 4), "white").save(source)
+            self.write_executable(
+                bin_dir / "osascript",
+                "#!/usr/bin/env bash\n"
+                "case \"$*\" in\n"
+                "  *JavaScript*) printf '%s\\n' '{\"windows\":[{\"process\":\"FakeApp\",\"index\":1,\"title\":\"A \\\"quoted\\\" window\",\"frontmost\":true,\"bounds\":{\"x\":1,\"y\":2,\"width\":4,\"height\":4}}],\"visible_processes\":1,\"accessible_processes\":1,\"skipped_processes\":0,\"skipped_windows\":0,\"frontmost_process\":\"FakeApp\"}' ;;\n"
+                "  *visible*) echo FakeApp ;;\n"
+                "  *frontmost*) echo FakeApp ;;\n"
+                "  *) script=$(cat); case \"$script\" in *position*) echo '1, 2' ;; *size*) echo '4, 4' ;; esac ;;\n"
+                "esac\n",
+            )
+            self.write_executable(
+                bin_dir / "screencapture",
+                "#!/usr/bin/env bash\n"
+                "for arg in \"$@\"; do output=$arg; done\n"
+                "mkdir -p \"$(dirname \"$output\")\"\n"
+                "cp \"$SEER_TEST_IMAGE\" \"$output\"\n",
+            )
+            env = os.environ | {
+                "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                "SEER_OUT_DIR": str(work / "out"),
+                "SEER_LOOP_DIR": str(loop_dir),
+                "SEER_TEST_IMAGE": str(source),
+            }
+
+            doctor = self.run_cli("doctor", "--json", cwd=work, env=env)
+            self.assertEqual(doctor.returncode, 0, doctor.stderr)
+            self.assertEqual(json.loads(doctor.stdout)["status"], "pass")
+            self.assertEqual(doctor.stderr, "")
+
+            windows = self.run_cli("windows", "--json", cwd=work, env=env)
+            windows_payload = json.loads(windows.stdout)
+            self.assertEqual(windows.returncode, 0, windows.stderr)
+            self.assertEqual(windows_payload["windows"][0]["title"], 'A "quoted" window')
+
+            captured = self.run_cli(
+                "capture",
+                "--process",
+                "FakeApp",
+                "--out",
+                str(current),
+                "--json",
+                cwd=work,
+                env=env,
+            )
+            captured_payload = json.loads(captured.stdout)
+            self.assertEqual(captured.returncode, 0, captured.stderr)
+            self.assertEqual(Path(captured_payload["artifacts"]["current"]), current.resolve())
+            self.assertTrue(current.is_file())
+
+            missing = self.run_cli("verify", str(current), "home", "--json", cwd=work, env=env)
+            self.assertEqual(missing.returncode, 3, missing.stderr)
+            self.assertEqual(json.loads(missing.stdout)["status"], "needs_baseline")
+
+            created = self.run_cli(
+                "verify",
+                str(current),
+                "home",
+                "--create-baseline",
+                "--json",
+                cwd=work,
+                env=env,
+            )
+            self.assertEqual(created.returncode, 0, created.stderr)
+            self.assertEqual(json.loads(created.stdout)["operation"], "baseline_create")
+
+            changed = Image.new("RGB", (4, 4), "white")
+            changed.putpixel((0, 0), (0, 0, 0))
+            changed.save(current)
+            failed = self.run_cli("verify", str(current), "home", "--json", cwd=work, env=env)
+            self.assertEqual(failed.returncode, 1, failed.stderr)
+            self.assertEqual(json.loads(failed.stdout)["status"], "fail")
+
+            invalid = self.run_cli(
+                "verify",
+                str(current),
+                "home",
+                "--max-diff-percent",
+                "nan",
+                "--json",
+                cwd=work,
+                env=env,
+            )
+            self.assertEqual(invalid.returncode, 2)
+            self.assertEqual(invalid.stdout, "")
+            self.assertIn("finite number", invalid.stderr)
+
     def test_compare_detects_alpha_and_writes_basename_outputs(self):
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp)
@@ -279,7 +385,7 @@ class SmokeTests(unittest.TestCase):
 
             result = self.run_shell("capture_app_window.sh", cwd=work, env=env)
 
-            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.returncode, 2)
             self.assertEqual(result.stdout, "")
             self.assertIn("window not found", result.stderr)
 
