@@ -40,12 +40,12 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" || $# -lt 1 ]]; then
 fi
 
 if ! command -v ffmpeg >/dev/null 2>&1; then
-  echo "error: ffmpeg not found"
+  echo "error: ffmpeg not found" >&2
   exit 1
 fi
 
 if ! command -v ffprobe >/dev/null 2>&1; then
-  echo "error: ffprobe not found"
+  echo "error: ffprobe not found" >&2
   exit 1
 fi
 
@@ -53,7 +53,7 @@ video="$1"
 shift
 
 if [[ ! -f "${video}" ]]; then
-  echo "error: video not found: ${video}"
+  echo "error: video not found: ${video}" >&2
   exit 1
 fi
 
@@ -72,6 +72,7 @@ sheet_cols=""
 make_gif=0
 gif_width="640"
 print_json=0
+out_dir_explicit=0
 mode_requested=""
 mode_used=""
 fallback_used=0
@@ -81,6 +82,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --out)
       out_dir="${2:-}"
+      out_dir_explicit=1
       shift 2
       ;;
     --mode)
@@ -120,12 +122,43 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     *)
-      echo "error: unknown arg: $1"
-      usage
+      echo "error: unknown arg: $1" >&2
+      usage >&2
       exit 1
       ;;
   esac
 done
+
+case "${mode}" in
+  scene|fps|keyframes) ;;
+  *)
+    echo "error: unknown mode: ${mode} (use scene, fps, or keyframes)" >&2
+    exit 1
+    ;;
+esac
+
+scene_re='^(0([.][0-9]+)?|1([.]0+)?)$'
+number_re='^([0-9]+([.][0-9]+)?|[.][0-9]+)$'
+if [[ ! "${scene_threshold}" =~ ${scene_re} ]]; then
+  echo "error: --scene must be a number from 0 to 1" >&2
+  exit 1
+fi
+if [[ ! "${fps}" =~ ${number_re} || ! "${fps}" =~ [1-9] ]]; then
+  echo "error: --fps must be a positive number" >&2
+  exit 1
+fi
+if [[ ! "${max_frames}" =~ ^[0-9]+$ ]]; then
+  echo "error: --max must be a non-negative integer" >&2
+  exit 1
+fi
+if [[ -n "${sheet_cols}" && ! "${sheet_cols}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "error: --sheet-cols must be a positive integer" >&2
+  exit 1
+fi
+if [[ ! "${gif_width}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "error: --gif-width must be a positive integer" >&2
+  exit 1
+fi
 
 mode_requested="${mode}"
 mode_used="${mode}"
@@ -135,6 +168,11 @@ slug="${base%.*}"
 
 if [[ -z "${out_dir}" ]]; then
   out_dir="${summary_root_dir}/summary-${slug}-${run_id}"
+fi
+
+if [[ ${out_dir_explicit} -eq 1 && -d "${out_dir}" ]] && compgen -G "${out_dir}/frame-*.png" >/dev/null; then
+  echo "error: output directory already contains frame images: ${out_dir}" >&2
+  exit 1
 fi
 
 mkdir -p "${out_dir}"
@@ -157,7 +195,7 @@ extract_frames_for_mode() {
         "${out_dir}/frame-%04d.png"
       ;;
     *)
-      echo "error: unknown mode: ${extract_mode} (use scene, fps, or keyframes)"
+      echo "error: unknown mode: ${extract_mode} (use scene, fps, or keyframes)" >&2
       exit 1
       ;;
   esac
@@ -187,7 +225,7 @@ if [[ "${mode_used}" == "scene" && "${frame_count}" -lt 2 ]]; then
 fi
 
 if [[ "${frame_count}" -eq 0 ]]; then
-  echo "error: no frames extracted (try lower --scene or use --mode fps)"
+  echo "error: no frames extracted (try lower --scene or use --mode fps)" >&2
   exit 1
 fi
 

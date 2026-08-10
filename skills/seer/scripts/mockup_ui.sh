@@ -63,16 +63,16 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     *)
-      echo "error: unknown arg: $1"
-      usage
+      echo "error: unknown arg: $1" >&2
+      usage >&2
       exit 1
       ;;
   esac
 done
 
 if [[ -z "${spec}" ]]; then
-  echo "error: --spec is required"
-  usage
+  echo "error: --spec is required" >&2
+  usage >&2
   exit 1
 fi
 
@@ -118,7 +118,7 @@ if [[ "${spec}" == "-" ]]; then
   spec="${spec_path}"
 else
   if [[ ! -f "${spec}" ]]; then
-    echo "error: spec not found: ${spec}"
+    echo "error: spec not found: ${spec}" >&2
     exit 1
   fi
   cp -f "${spec}" "${spec_path}"
