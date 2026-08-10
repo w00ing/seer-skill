@@ -1,54 +1,143 @@
-# seer-skill
+# Seer
 
-Visual feedback capture skill for macOS app windows.
+**Visual verification for coding agents on macOS.**
+
+Seer gives Codex and Claude Code a repeatable native-UI feedback loop: capture a running app window, inspect the visible result, and compare it with an explicitly approved baseline. Screenshots, diffs, recordings, and machine-readable reports stay local under `.seer/`.
+
+Seer is an evidence layer, not another desktop automation framework. Your agent changes the code; Seer verifies what actually appeared on screen.
 
 [![release](https://img.shields.io/github/v/release/w00ing/seer-skill)](https://github.com/w00ing/seer-skill/releases)
 [![license](https://img.shields.io/github/license/w00ing/seer-skill)](https://github.com/w00ing/seer-skill/blob/main/LICENSE)
 
-## Support
-
-- macOS only
-
-## Demo
-
-![seer demo](assets/seer-demo.gif)
-
-Full video: `assets/seer-demo.mov`
-
-## Features
-
-- Precise capture of a visible macOS app window
-- Window video capture + frame extraction
-- ffmpeg-backed full-display recording with manual stop for long QA runs
-- UI mockups by annotating screenshots (arrow, rectangle, text)
-- Excalidraw scene generation (`.excalidraw`) from natural language prompts
-- Scripted visual loop support (diffs, baselines, reports)
-- Organized output layout under `.seer/` with latest artifacts
+> macOS only. No model API key or background daemon. Window capture requires Screen Recording and Accessibility permissions.
 
 ## Install
 
-Codex (skill-installer UI):
-- Run `$skill-installer`
-- Ask: install GitHub repo `w00ing/seer-skill` path `skills/seer`
+### Codex
 
-Claude Code (plugin):
-- `/plugin marketplace add https://github.com/w00ing/seer-skill.git`
-- `/plugin install seer-skill@seer`
-  - If the marketplace was previously added, run `/plugin marketplace update seer` before installing to pick up updates.
+Run `$skill-installer`, then ask:
 
-Manual (Codex):
-```bash
-mkdir -p ~/.codex/skills
-git clone https://github.com/w00ing/seer-skill.git /tmp/seer-skill
-rsync -a /tmp/seer-skill/skills/seer/ ~/.codex/skills/seer/
+```text
+Install the `seer` skill from GitHub repository `w00ing/seer-skill` at path `skills/seer`.
 ```
 
-Manual (Claude Code):
-```bash
-mkdir -p ~/.claude/skills
-git clone https://github.com/w00ing/seer-skill.git /tmp/seer-skill
-rsync -a /tmp/seer-skill/skills/seer/ ~/.claude/skills/seer/
+### Claude Code
+
+```text
+/plugin marketplace add https://github.com/w00ing/seer-skill.git
+/plugin install seer-skill@seer
 ```
+
+If the marketplace already exists, run `/plugin marketplace update seer` first.
+
+## Try it
+
+Codex:
+
+```text
+$seer Capture the frontmost app, inspect the visible UI, and verify my latest change.
+```
+
+Claude Code plugin:
+
+```text
+/seer-skill:seer Capture the frontmost app, inspect the visible UI, and verify my latest change.
+```
+
+Or ask either agent:
+
+```text
+Use Seer to capture the Settings window and compare it with the approved `settings` baseline. If no baseline exists, report it and ask before creating one.
+```
+
+## 30-second verification loop
+
+Image verification requires Pillow in the active `python3` environment. If it is not already available:
+
+```bash
+python3 -m venv .local/venv
+source .local/venv/bin/activate
+python -m pip install pillow
+```
+
+Then run the underlying scripts directly from a clone:
+
+```bash
+current=$(bash skills/seer/scripts/capture_app_window.sh)
+
+# No baseline is silently approved. This returns needs_baseline (exit 3).
+bash skills/seer/scripts/loop_compare.sh "$current" settings
+
+# Create it only after reviewing the capture.
+bash skills/seer/scripts/loop_compare.sh --create-baseline "$current" settings
+
+# After a UI change, allow at most 0.5% changed pixels.
+current=$(bash skills/seer/scripts/capture_app_window.sh)
+bash skills/seer/scripts/loop_compare.sh --max-diff-percent 0.5 "$current" settings
+```
+
+Verification prints one JSON object to stdout and writes the current image, diff, history, and report under `.seer/loop/`.
+
+| Status | Exit | Meaning |
+|---|---:|---|
+| `pass` | 0 | Changed pixels are within the allowed threshold. |
+| `fail` | 1 | The visual difference exceeds the threshold. |
+| `needs_baseline` | 3 | No approved baseline exists; Seer did not create one. |
+
+The default threshold is 0%. Other tool or input errors return non-zero and write diagnostics to stderr.
+
+## Demo
+
+![Seer capturing and verifying a macOS app window](assets/seer-demo.gif)
+
+[View the full demo video](assets/seer-demo.mov)
+
+## Core commands
+
+| Task | Command |
+|---|---|
+| Capture a visible app window | `bash skills/seer/scripts/capture_app_window.sh` |
+| Verify against a named baseline | `bash skills/seer/scripts/loop_compare.sh <current.png> <name>` |
+| Record a short app flow | `bash skills/seer/scripts/record_app_window.sh --duration 3` |
+| Summarize a recording | `bash skills/seer/scripts/summarize_video.sh <video.mov> --sheet --gif` |
+
+Use `--help` on any command for its complete options. Pillow is required for image comparison and annotation; ffmpeg and ffprobe are optional unless you use video workflows.
+
+## Advanced workflows
+
+- `record_screen.sh`: full-display or region recording, including manual-stop ffmpeg capture.
+- `extract_frames.sh`: fixed-FPS frame extraction.
+- `mockup_ui.sh` and `annotate_image.py`: screenshot annotations; run `annotate_image.py --spec-help` for the JSON schema.
+- `excalidraw_from_text.py`: natural-language-to-Excalidraw wireframes. See [Excalidraw wireframing](docs/excalidraw-wireframing.md).
+- `type_into_app.sh`: explicit, state-changing typing through System Events.
+
+See [Visual loop internals](docs/visual-loop.md) for the underlying image metrics.
+
+## Artifact layout
+
+```text
+.seer/
+├── capture/      window screenshots
+├── record/       recordings, frames, contact sheets, and GIFs
+├── mockup/       annotated screenshots and specs
+├── excalidraw/   generated .excalidraw scenes
+└── loop/
+    ├── baselines/
+    ├── latest/
+    ├── history/
+    ├── diffs/
+    └── reports/
+```
+
+Set `SEER_OUT_DIR` to change the output root or `SEER_LOOP_DIR` to change only visual-verification storage. Add `.seer/` to the target project's `.gitignore` unless you intentionally version its baselines.
+
+## Permissions and troubleshooting
+
+- `error: window not found`: start the app, check its process name, and ensure it has a visible window.
+- Empty or black capture: grant Screen Recording permission to the terminal running the agent.
+- Wrong window: pass the exact process name to `capture_app_window.sh`.
+- Typing fails: grant Accessibility and Automation → System Events permissions.
+- Diff command reports missing Pillow: install it in the `python3` environment used by Seer.
 
 ## Development
 
@@ -58,175 +147,12 @@ python3 -m venv .local/venv
 .local/venv/bin/python -m unittest discover -s tests -v
 ```
 
-## Use
+Shell scripts are checked on macOS CI. Claude packaging can be validated locally with:
 
-- Skill name: `seer`
-- Script: `skills/seer/scripts/capture_app_window.sh`
-- Script: `skills/seer/scripts/record_app_window.sh`
-- Script: `skills/seer/scripts/record_screen.sh`
-- Script: `skills/seer/scripts/extract_frames.sh`
-- Script: `skills/seer/scripts/summarize_video.sh`
-- Script: `skills/seer/scripts/type_into_app.sh`
-- Script: `skills/seer/scripts/mockup_ui.sh`
-- Script: `skills/seer/scripts/excalidraw_from_text.py`
-- Script: `skills/seer/scripts/annotate_image.py`
-- Default output: `.seer/capture/app-window-<app>-YYYYMMDD-HHMMSS-<pid>-<rand>.png`
-- Set `SEER_OUT_DIR` to change default output root (falls back to `SEER_TMP_DIR` for legacy behavior)
-- Installed paths (Codex/Claude Code): `~/.codex/skills/seer/scripts` or `~/.claude/skills/seer/scripts`
-
-### Window capture
-
-Capture the frontmost app window (or a named process) as a precise PNG. Output is organized under `.seer/capture/` with app‑slugged filenames for easy tracking.
-
-### Window recording + frames
-
-Record a window region to `.mov` and extract frames for granular analysis.
-
-### Screen recording
-
-Record the full screen (or a specified region/display) to `.mov`, or use ffmpeg for direct `.mp4` capture with manual stop.
-
-### Video summary (representative frames)
-
-Extract representative frames from a video using scene detection, keyframes, or fixed FPS. Optionally render a contact sheet or preview GIF.
-
-Summary flags (when using `record_app_window.sh --summary`):
-- `--summary-mode <scene|fps|keyframes>`: selection strategy (default: `scene`)
-- `--summary-scene <threshold>`: scene-change sensitivity (default: `0.30`)
-- `--summary-fps <n>`: sampling rate for `fps` mode (default: `2`)
-- `--summary-max <n>`: cap frame count (default: `24`, `0` disables cap)
-- `--summary-out <dir>`: output folder
-- `--summary-sheet`: create `sheet.png` contact sheet
-- `--summary-sheet-cols <n>`: contact sheet columns (default: auto)
-- `--summary-gif`: create `preview.gif`
-- `--summary-gif-width <px>`: GIF max width (default: `640`)
-
-### UI mockups (annotations)
-
-Create lightweight UI mockups by drawing arrows, rectangles, and text on a capture using a JSON spec. Output images + spec + metadata are saved together under `.seer/mockup/`.
-
-### Excalidraw wireframes (NL → `.excalidraw`)
-
-Generate an Excalidraw scene file from a simple, structured natural-language prompt. By default, it will use a bundled UI component library (if present) to render nicer headers/inputs/buttons/tabs automatically.
-
-Docs: `docs/excalidraw-wireframing.md`
-
-### Visual diff loop
-
-Maintain baselines and compare current UI to previous snapshots with diffs and JSON reports. Useful for quick visual regressions or confirming UI changes.
-
-### Organized artifacts
-
-Every mockup run stores capture, spec, output, and metadata, plus `latest-*` convenience copies per app slug for fast access.
-
-Examples:
 ```bash
-bash skills/seer/scripts/capture_app_window.sh
-bash skills/seer/scripts/capture_app_window.sh /tmp/promptlight.png "Promptlight"
-bash skills/seer/scripts/capture_app_window.sh --help
-bash skills/seer/scripts/record_app_window.sh --duration 3 --frames --fps 20
-bash skills/seer/scripts/record_screen.sh --duration 3
-bash skills/seer/scripts/record_screen.sh --duration 3 --display 1
-bash skills/seer/scripts/record_screen.sh --duration 3 --region 100,100,800,600
-bash skills/seer/scripts/record_screen.sh --engine ffmpeg --manual-stop --capture-cursor --capture-clicks
-bash skills/seer/scripts/record_screen.sh --engine ffmpeg --device-index 1 --duration 20
-bash skills/seer/scripts/record_app_window.sh --duration 3 --summary --summary-mode scene --summary-max 24 --summary-sheet --summary-gif
-bash skills/seer/scripts/extract_frames.sh /tmp/recording.mov --fps 20
-bash skills/seer/scripts/summarize_video.sh /tmp/recording.mov --mode scene --sheet --gif
-bash skills/seer/scripts/type_into_app.sh --app "Promptlight" --text "hello" --enter
-bash skills/seer/scripts/type_into_app.sh --app "Promptlight" --click-rel 120,180 --text "hello"
-bash skills/seer/scripts/type_into_app.sh --text "hello" --no-activate
-bash skills/seer/scripts/type_into_app.sh --bundle-id com.example.app --text -
-bash skills/seer/scripts/mockup_ui.sh --spec spec.json
-bash skills/seer/scripts/mockup_ui.sh --spec spec.json --json
-python3 skills/seer/scripts/annotate_image.py input.png output.png --spec spec.json
-python3 skills/seer/scripts/annotate_image.py --spec-help
+claude plugin validate --strict .
 ```
 
-Mockup spec example (supports global defaults + auto-scale for visibility):
-```json
-{
-  "defaults": {
-    "auto_scale": true,
-    "outline": true,
-    "text_bg": "rgba(0,0,0,0.6)"
-  },
-  "annotations": [
-    {"type": "spotlight", "x": 110, "y": 70, "w": 190, "h": 60, "radius": 10},
-    {"type": "rect", "x": 120, "y": 80, "w": 160, "h": 40, "color": "#FF3B30", "width": 3},
-    {"type": "arrow", "x1": 60, "y1": 140, "x2": 120, "y2": 100, "color": "#0A84FF", "width": 3},
-    {"type": "text", "x": 130, "y": 90, "text": "Add button", "color": "#FFFFFF", "size": 14}
-  ]
-}
-```
+## License
 
-Auto-fit rect/spotlight bounds (optional):
-```json
-{
-  "annotations": [
-    {
-      "type": "rect",
-      "x": 80,
-      "y": 1600,
-      "w": 1000,
-      "h": 600,
-      "color": "#FF9F0A",
-      "fit": "luma"
-    },
-    {
-      "type": "rect",
-      "x": 40,
-      "y": 2600,
-      "w": 1240,
-      "h": 170,
-      "color": "#FF9F0A",
-      "fit": {"mode": "color", "color": "#CCB590", "tolerance": 18, "pad": 6}
-    }
-  ]
-}
-```
-Notes:
-- Auto-fit is **enabled by default** for rect/spotlight. Disable with `"fit": false` on an annotation or `"auto_fit": false` in defaults.
-- `fit` searches within the provided `x/y/w/h` region and adjusts the rect bounds to the detected pixels.
-- If the detected area is smaller than the original region, auto-fit recenters the rect/spotlight on the detected pixels while keeping the original size.
-- `fit: "luma"` finds dark (or light) pixels by threshold (default `160`). Use `{"target":"light"}` for light text.
-- `fit: {"mode":"color"}` matches a target color with `tolerance` (default `18`). Use `pad` to expand the result.
-- Optional defaults: `fit_mode`, `fit_threshold`, `fit_target`, `fit_tolerance`, `fit_color`, `fit_pad`, `fit_min_pixels`, `fit_min_coverage` (default `0.6`).
-
-Auto-anchor arrows/text (optional):
-```json
-{
-  "annotations": [
-    {"type": "rect", "id": "cta", "x": 40, "y": 2600, "w": 1240, "h": 170, "color": "#FF9F0A"},
-    {"type": "arrow", "from": "cta", "from_pos": "top", "to": "nearest", "to_pos": "left"},
-    {"type": "text", "text": "CTA needs more contrast", "anchor": "cta", "anchor_pos": "top", "anchor_offset": [0, -8]}
-  ]
-}
-```
-Notes:
-- `anchor` (text) and `from`/`to` (arrow) accept `"nearest"`, an `id`, or an `index`.
-- Positions: `center`, `top`, `bottom`, `left`, `right`, `top_left`, `top_right`, `bottom_left`, `bottom_right`.
-
-Output layout (default under `.seer/`):
-- `capture/` window screenshots
-- `record/` window recordings + extracted frame folders
-- `mockup/` annotated mockups + their capture/spec/meta (also writes `latest-*` convenience copies)
-- `excalidraw/` generated `.excalidraw` scenes (also writes `latest-*.excalidraw`)
-- `loop/` visual regression loop storage (baselines/latest/history/diffs/reports)
-
-## Examples (prompts)
-
-- "Check the layout of the app and suggest UI fixes."
-- "Redesign this screen; take a screenshot first."
-- "Is the spacing on this window consistent?"
-
-## Permissions
-
-- macOS Screen Recording + Accessibility for terminal
-- Automation (System Events) required for `type_into_app.sh`
-
-## Troubleshooting
-
-- `error: window not found`: app not running, wrong process name, or no visible window.
-- Empty/black image: Screen Recording not granted to terminal.
-- Wrong window: pass exact process name (e.g. "Promptlight").
+MIT

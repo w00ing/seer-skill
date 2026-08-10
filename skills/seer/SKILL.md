@@ -1,6 +1,8 @@
 ---
 name: seer
-description: Visual feedback capture for any running macOS app window via osascript plus screencapture/ffmpeg screen capture. Use when the user wants UI verification or a fresh screenshot.
+description: Captures visible macOS app windows and verifies UI changes against explicitly approved baselines. Use when an agent must inspect a fresh screenshot, verify native UI changes, or produce local visual QA evidence.
+license: MIT
+compatibility: Requires macOS with Screen Recording and Accessibility permissions. Pillow is required for image diff and annotation; ffmpeg is optional for video workflows.
 ---
 
 # Seer
@@ -25,8 +27,8 @@ Capture a precise screenshot of a visible app window, annotate it for quick UI m
    - `bash scripts/mockup_ui.sh --spec spec.json`
    - `bash scripts/mockup_ui.sh --spec spec.json --json`
 5. (Optional) Store + compare in the visual loop:
-   - `bash scripts/loop_compare.sh /path/to/out.png web-home`
-   - First run creates a baseline under `$SEER_LOOP_DIR` (default `.seer/loop`)
+   - `bash scripts/loop_compare.sh --max-diff-percent 0.5 /path/to/out.png web-home`
+   - A missing baseline returns `needs_baseline` (exit 3); create it only after explicit approval with `--create-baseline`
 6. Attach the current image (and diff image, if generated) with `view_image`.
 
 ## Usage
@@ -65,8 +67,9 @@ Capture a precise screenshot of a visible app window, annotate it for quick UI m
 - `python3 scripts/annotate_image.py --spec-help` (prints JSON spec schema)
 - `annotate_image.py` supports top-level `defaults` (e.g., `auto_scale`, `outline`, `text_bg`), `spotlight` annotations to dim the background, `fit` (enabled by default) to auto-adjust rect/spotlight bounds, and `anchor`/`from`/`to` for auto-anchoring labels and arrows.
 - `bash scripts/loop_compare.sh --help`
-- `bash scripts/loop_compare.sh [--loop-dir <path>] [--resize] [--update-baseline] <current_path> <baseline_name>`
+- `bash scripts/loop_compare.sh [--loop-dir <path>] [--resize] [--max-diff-percent <0-100>] [--create-baseline|--update-baseline] <current_path> <baseline_name>`
   - set `SEER_LOOP_DIR` to change default loop directory (default `.seer/loop`)
+  - visual differences fail with exit 1; the default allowed difference is 0%
   - consider adding `.seer/` to `.gitignore`
 
 ## Workflow

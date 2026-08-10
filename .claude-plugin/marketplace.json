@@ -1,12 +1,13 @@
 {
   "name": "seer",
+  "description": "Visual verification for coding agents on macOS.",
   "owner": {
     "name": "w00ing"
   },
   "plugins": [
     {
       "name": "seer-skill",
-      "description": "Visual feedback capture for macOS app windows.",
+      "description": "Visual verification for coding agents on macOS.",
       "source": "./"
     }
   ]
