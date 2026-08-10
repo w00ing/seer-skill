@@ -53,8 +53,9 @@ rsync -a /tmp/seer-skill/skills/seer/ ~/.claude/skills/seer/
 ## Development
 
 ```bash
-python3 -m pip install pillow
-python3 -m unittest discover -s tests -v
+python3 -m venv .local/venv
+.local/venv/bin/python -m pip install pillow
+.local/venv/bin/python -m unittest discover -s tests -v
 ```
 
 ## Use

@@ -11,7 +11,9 @@ jobs:
   smoke:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - run: python3 -m pip install pillow
+      - uses: actions/checkout@v7
+      - run: |
+          python3 -m venv .local/venv
+          .local/venv/bin/python -m pip install pillow
       - run: for script in skills/seer/scripts/*.sh; do bash -n "$script"; done
-      - run: python3 -m unittest discover -s tests -v
+      - run: .local/venv/bin/python -m unittest discover -s tests -v
