@@ -59,6 +59,114 @@ class SmokeTests(unittest.TestCase):
             self.assertTrue((work / "diff.png").is_file())
             self.assertTrue((work / "report.json").is_file())
 
+    def test_loop_compare_baseline_and_threshold_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            current = work / "current.png"
+            loop_dir = work / "loop"
+            baseline = loop_dir / "baselines" / "home.png"
+            Image.new("RGB", (4, 4), "white").save(current)
+            env = os.environ | {"SEER_LOOP_DIR": str(loop_dir)}
+
+            missing = self.run_shell(
+                "loop_compare.sh", str(current), "home", cwd=work, env=env
+            )
+
+            self.assertEqual(missing.returncode, 3, missing.stderr)
+            self.assertEqual(json.loads(missing.stdout)["status"], "needs_baseline")
+            self.assertFalse(loop_dir.exists())
+
+            current.write_bytes(b"not an image")
+            invalid_baseline = self.run_shell(
+                "loop_compare.sh",
+                "--create-baseline",
+                str(current),
+                "home",
+                cwd=work,
+                env=env,
+            )
+            self.assertEqual(invalid_baseline.returncode, 2)
+            self.assertFalse(loop_dir.exists())
+            Image.new("RGB", (4, 4), "white").save(current)
+
+            created = self.run_shell(
+                "loop_compare.sh",
+                "--create-baseline",
+                str(current),
+                "home",
+                cwd=work,
+                env=env,
+            )
+
+            created_payload = json.loads(created.stdout)
+            self.assertEqual(created.returncode, 0, created.stderr)
+            self.assertEqual(created_payload["operation"], "baseline_create")
+            self.assertEqual(created_payload["status"], "pass")
+            self.assertEqual(
+                Path(created_payload["baseline_created"]).resolve(), baseline.resolve()
+            )
+            self.assertTrue(baseline.is_file())
+
+            compared = self.run_shell(
+                "loop_compare.sh", str(current), "home", cwd=work, env=env
+            )
+            compared_payload = json.loads(compared.stdout)
+            self.assertEqual(compared.returncode, 0, compared.stderr)
+            self.assertEqual(compared_payload["status"], "pass")
+            self.assertEqual(compared_payload["percent_changed"], 0.0)
+
+            changed_image = Image.new("RGB", (4, 4), "white")
+            changed_image.putpixel((0, 0), (0, 0, 0))
+            changed_image.save(current)
+
+            failed = self.run_shell(
+                "loop_compare.sh", str(current), "home", cwd=work, env=env
+            )
+            failed_payload = json.loads(failed.stdout)
+            self.assertEqual(failed.returncode, 1, failed.stderr)
+            self.assertEqual(failed_payload["status"], "fail")
+            self.assertEqual(failed_payload["pixels_changed"], 1)
+
+            allowed = self.run_shell(
+                "loop_compare.sh",
+                "--max-diff-percent",
+                "6.25",
+                str(current),
+                "home",
+                cwd=work,
+                env=env,
+            )
+            self.assertEqual(allowed.returncode, 0, allowed.stderr)
+            self.assertEqual(json.loads(allowed.stdout)["status"], "pass")
+
+            invalid = self.run_shell(
+                "loop_compare.sh",
+                "--max-diff-percent",
+                "nan",
+                str(current),
+                "home",
+                cwd=work,
+                env=env,
+            )
+            self.assertEqual(invalid.returncode, 2)
+            self.assertEqual(invalid.stdout, "")
+
+            baseline_before = baseline.read_bytes()
+            history_count = len(list((loop_dir / "history").iterdir()))
+            current.write_bytes(b"not an image")
+            corrupt = self.run_shell(
+                "loop_compare.sh",
+                "--update-baseline",
+                str(current),
+                "home",
+                cwd=work,
+                env=env,
+            )
+            self.assertEqual(corrupt.returncode, 2)
+            self.assertEqual(corrupt.stdout, "")
+            self.assertEqual(baseline.read_bytes(), baseline_before)
+            self.assertEqual(len(list((loop_dir / "history").iterdir())), history_count)
+
     def test_annotate_rejects_invalid_annotations(self):
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp)
