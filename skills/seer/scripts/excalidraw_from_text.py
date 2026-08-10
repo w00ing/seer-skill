@@ -1808,7 +1808,9 @@ def main(argv: list[str]) -> int:
     slug = _slugify(args.name)
 
     out_path = args.out or os.path.join(_default_excalidraw_output_dir(out_root), f"nl-{slug}-{run_id}.excalidraw")
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    out_dir = os.path.dirname(out_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
 
     theme = THEMES[args.theme]
     fidelity: Fidelity = args.fidelity  # type: ignore[assignment]

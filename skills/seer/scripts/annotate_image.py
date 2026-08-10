@@ -751,12 +751,20 @@ def main() -> int:
     base_scale = _resolve_scale(defaults, image.size)
 
     annotations = spec.get("annotations", [])
+    if not isinstance(annotations, list):
+        print("error: annotations must be a list", file=sys.stderr)
+        return 1
+
     spotlights = []
     others = []
     for idx, ann in enumerate(annotations):
         if not isinstance(ann, dict):
-            continue
+            print(f"error: annotation {idx} must be an object", file=sys.stderr)
+            return 1
         ann_type = str(ann.get("type", "")).lower()
+        if ann_type not in ("spotlight", "focus", "dim", "rect", "arrow", "text"):
+            print(f"error: unsupported annotation type at index {idx}: {ann_type or '<missing>'}", file=sys.stderr)
+            return 1
         if ann_type in ("spotlight", "focus", "dim"):
             spotlights.append((idx, ann))
         else:
@@ -794,7 +802,8 @@ def main() -> int:
         try:
             overlay = _draw_spotlight(overlay, ann, ann_scale, defaults)
         except Exception as exc:
-            print(f"warn: failed annotation spotlight: {exc}", file=sys.stderr)
+            print(f"error: failed annotation spotlight: {exc}", file=sys.stderr)
+            return 1
 
     draw = ImageDraw.Draw(overlay)
     for ann in prepared_others:
@@ -810,7 +819,8 @@ def main() -> int:
                 ann = _apply_text_anchor(ann, anchor_targets, defaults, image.size)
                 _draw_text(draw, ann, ann_scale)
         except Exception as exc:
-            print(f"warn: failed annotation {ann_type}: {exc}", file=sys.stderr)
+            print(f"error: failed annotation {ann_type}: {exc}", file=sys.stderr)
+            return 1
 
     combined = Image.alpha_composite(image, overlay)
     out_dir = os.path.dirname(args.output)

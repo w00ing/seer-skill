@@ -75,7 +75,6 @@ summary_gif_width="640"
 print_json=0
 activate=0
 activate_set=0
-process_set=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -85,12 +84,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --process)
       process="${2:-}"
-      process_set=1
       shift 2
       ;;
     --simulator)
       process="Simulator"
-      process_set=1
       if [[ ${activate_set} -eq 0 ]]; then
         activate=1
       fi
@@ -167,8 +164,8 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     *)
-      echo "error: unknown arg: $1"
-      usage
+      echo "error: unknown arg: $1" >&2
+      usage >&2
       exit 1
       ;;
   esac
@@ -208,8 +205,8 @@ pos=$(osascript -e "tell application \"System Events\" to tell process \"${proce
 size=$(osascript -e "tell application \"System Events\" to tell process \"${process}\" to get size of window 1" 2>/dev/null || true)
 
 if [[ -z "${pos}" || -z "${size}" ]]; then
-  echo "error: window not found for process '${process}'"
-  echo "hint: verify app is running, Accessibility enabled for terminal, and process name (try exact app name)"
+  echo "error: window not found for process '${process}'" >&2
+  echo "hint: verify app is running, Accessibility enabled for terminal, and process name (try exact app name)" >&2
   exit 1
 fi
 
@@ -236,7 +233,7 @@ screencapture -x -v -R "${x},${y},${w},${h}" -V "${duration}" "${out}"
 frames_out=""
 if [[ ${extract_frames} -eq 1 ]]; then
   if ! command -v ffmpeg >/dev/null 2>&1; then
-    echo "error: ffmpeg not found (required for frame extraction)"
+    echo "error: ffmpeg not found (required for frame extraction)" >&2
     exit 1
   fi
   mkdir -p "${frames_dir}"
@@ -253,7 +250,7 @@ if [[ ${run_summary} -eq 1 ]]; then
   script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
   summary_script="${script_dir}/summarize_video.sh"
   if [[ ! -x "${summary_script}" ]]; then
-    echo "error: summarize_video.sh not found or not executable: ${summary_script}"
+    echo "error: summarize_video.sh not found or not executable: ${summary_script}" >&2
     exit 1
   fi
 
@@ -281,19 +278,22 @@ if [[ ${run_summary} -eq 1 ]]; then
     set -e
   else
     set +e
-    summary_lines=()
-    while IFS= read -r line; do
-      summary_lines+=("${line}")
-    done < <("${summary_script}" "${summary_args[@]}")
+    summary_output=$("${summary_script}" "${summary_args[@]}")
     summary_status=$?
     set -e
-    summary_dir="${summary_lines[0]:-}"
-    summary_sheet_path="${summary_lines[1]:-}"
-    summary_gif_path="${summary_lines[2]:-}"
+    if [[ ${summary_status} -eq 0 ]]; then
+      summary_lines=()
+      while IFS= read -r line; do
+        summary_lines+=("${line}")
+      done <<< "${summary_output}"
+      summary_dir="${summary_lines[0]:-}"
+      summary_sheet_path="${summary_lines[1]:-}"
+      summary_gif_path="${summary_lines[2]:-}"
+    fi
   fi
   if [[ ${summary_status:-0} -ne 0 ]]; then
     summary_error="summarize_video.sh failed (exit ${summary_status})"
-    echo "warn: ${summary_error}" >&2
+    echo "error: ${summary_error}" >&2
   fi
 fi
 
@@ -336,3 +336,5 @@ else
     echo "${summary_gif_path}"
   fi
 fi
+
+exit "${summary_status:-0}"

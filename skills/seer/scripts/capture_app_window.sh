@@ -46,8 +46,8 @@ pos=$(osascript -e "tell application \"System Events\" to tell process \"${proce
 size=$(osascript -e "tell application \"System Events\" to tell process \"${process}\" to get size of window 1" 2>/dev/null || true)
 
 if [[ -z "${pos}" || -z "${size}" ]]; then
-  echo "error: window not found for process '${process}'"
-  echo "hint: verify app is running, Accessibility enabled for terminal, and process name (try exact app name)"
+  echo "error: window not found for process '${process}'" >&2
+  echo "hint: verify app is running, Accessibility enabled for terminal, and process name (try exact app name)" >&2
   exit 1
 fi
 

@@ -1,0 +1,17 @@
+name: Smoke tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m pip install pillow
+      - run: for script in skills/seer/scripts/*.sh; do bash -n "$script"; done
+      - run: python3 -m unittest discover -s tests -v

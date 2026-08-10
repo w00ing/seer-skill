@@ -47,8 +47,11 @@ def main() -> int:
             return 1
 
     diff = ImageChops.difference(baseline, current)
-    gray = diff.convert("L")
-    hist = gray.histogram()
+    channels = diff.split()
+    magnitude = channels[0]
+    for channel in channels[1:]:
+        magnitude = ImageChops.lighter(magnitude, channel)
+    hist = magnitude.histogram()
     total = sum(hist)
     changed = total - hist[0] if total else 0
     avg = sum(i * c for i, c in enumerate(hist)) / (255 * total) if total else 0.0
@@ -59,9 +62,9 @@ def main() -> int:
     diff_path = None
     if args.diff_out:
         diff_path = args.diff_out
-        os.makedirs(os.path.dirname(diff_path), exist_ok=True)
+        os.makedirs(os.path.dirname(os.path.abspath(diff_path)), exist_ok=True)
         overlay = Image.new("RGBA", current.size, (255, 0, 0, 0))
-        overlay.putalpha(gray)
+        overlay.putalpha(magnitude)
         diff_vis = Image.alpha_composite(current, overlay).convert("RGB")
         diff_vis.save(diff_path)
 
@@ -76,7 +79,7 @@ def main() -> int:
     }
 
     if args.json_out:
-        os.makedirs(os.path.dirname(args.json_out), exist_ok=True)
+        os.makedirs(os.path.dirname(os.path.abspath(args.json_out)), exist_ok=True)
         with open(args.json_out, "w", encoding="utf-8") as f:
             json.dump(result, f, indent=2)
 
