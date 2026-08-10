@@ -2,130 +2,57 @@
 name: seer
 description: Captures visible macOS app windows and verifies UI changes against explicitly approved baselines. Use when an agent must inspect a fresh screenshot, verify native UI changes, or produce local visual QA evidence.
 license: MIT
-compatibility: Requires macOS with Screen Recording and Accessibility permissions. Pillow is required for image diff and annotation; ffmpeg is optional for video workflows.
 ---
 
 # Seer
 
-## Overview
-Capture a precise screenshot of a visible app window, annotate it for quick UI mockups, then compare against baselines to keep visual state in the agent loop.
+Use the unified CLI for visual evidence. Keep specialist scripts for recording, annotation, wireframing, and typing. Seer requires macOS with Screen Recording and Accessibility permissions.
 
-## Quick start
-1. Ensure the target app is running and Screen Recording + Accessibility are enabled for your terminal. (Automation -> System Events required for typing.)
-2. Run the script:
-   - `bash scripts/capture_app_window.sh` (defaults to frontmost app, output `.seer/capture/app-window-<app>-YYYYMMDD-HHMMSS-<pid>-<rand>.png`)
-   - `bash scripts/capture_app_window.sh /path/to/out.png "Promptlight"` (custom output + process name)
-3. (Optional) Record video + extract frames:
-   - `bash scripts/record_app_window.sh --duration 3 --frames --fps 20`
-   - `bash scripts/record_simulator.sh --duration 3 --summary --summary-sheet --summary-gif`
-   - `bash scripts/record_screen.sh --duration 3`
-   - `bash scripts/record_screen.sh --engine ffmpeg --manual-stop --capture-cursor --capture-clicks`
-   - `bash scripts/extract_frames.sh /path/to/video.mov --fps 20`
-   - `bash scripts/record_app_window.sh --duration 3 --summary --summary-sheet --summary-gif`
-   - `bash scripts/summarize_video.sh /path/to/video.mov --mode scene --sheet --gif`
-4. (Optional) Create a mockup with annotations:
-   - `bash scripts/mockup_ui.sh --spec spec.json`
-   - `bash scripts/mockup_ui.sh --spec spec.json --json`
-5. (Optional) Store + compare in the visual loop:
-   - `bash scripts/loop_compare.sh --max-diff-percent 0.5 /path/to/out.png web-home`
-   - A missing baseline returns `needs_baseline` (exit 3); create it only after explicit approval with `--create-baseline`
-6. Attach the current image (and diff image, if generated) with `view_image`.
+## Core workflow
 
-## Usage
-- `bash scripts/capture_app_window.sh --help`
-- `bash scripts/capture_app_window.sh [out_path] [process_name]`
-  - `out_path` default `.seer/capture/app-window-<app>-YYYYMMDD-HHMMSS-<pid>-<rand>.png`
-  - `process_name` default frontmost app
-  - set `SEER_OUT_DIR` to change default output root (falls back to `SEER_TMP_DIR` for legacy behavior)
-- `bash scripts/type_into_app.sh --help`
-- `bash scripts/type_into_app.sh --app "Promptlight" --text "hello" --enter`
-- `bash scripts/type_into_app.sh --app "Promptlight" --click-rel 120,180 --text "hello"`
-- `bash scripts/type_into_app.sh --text "hello" --no-activate`
-- `bash scripts/record_app_window.sh --help`
-- `bash scripts/record_app_window.sh --duration 3 --frames --fps 20`
-- `bash scripts/record_app_window.sh --duration 3 --summary --summary-mode scene --summary-max 24 --summary-sheet --summary-gif`
-- `bash scripts/record_app_window.sh --simulator --duration 3 --summary --summary-sheet`
-- `bash scripts/record_simulator.sh --duration 3 --summary --summary-sheet`
-- `bash scripts/record_screen.sh --help`
-- `bash scripts/record_screen.sh --duration 3 --display 1`
-- `bash scripts/record_screen.sh --duration 3 --region 100,100,800,600`
-- `bash scripts/record_screen.sh --engine ffmpeg --manual-stop --capture-cursor --capture-clicks`
-- `bash scripts/record_screen.sh --engine ffmpeg --device-index 1 --duration 20`
-- `bash scripts/extract_frames.sh --help`
-- `bash scripts/extract_frames.sh /path/to/video.mov --fps 20`
-- `bash scripts/summarize_video.sh --help`
-- `bash scripts/summarize_video.sh /path/to/video.mov --mode scene --sheet --gif`
-- `bash scripts/mockup_ui.sh --help`
-- `bash scripts/mockup_ui.sh --spec spec.json`
-- `bash scripts/mockup_ui.sh --spec spec.json --json`
-- `python3 scripts/excalidraw_from_text.py --help`
-- `python3 scripts/excalidraw_from_text.py --text "header: Settings; list: Account, Notifications, Privacy; button: Log out"`
-- `python3 scripts/excalidraw_from_text.py --text $'screen: Home\nheader: Home\nbutton: Get started\n\nscreen: Settings\nheader: Settings\nlist: Account, Notifications\nbutton: Log out' --theme classic --fidelity medium`
-- `cat prompt.txt | python3 scripts/excalidraw_from_text.py --name settings`
-- `python3 scripts/excalidraw_from_text.py --text "lib: Search field | Search" --json` (explicit Excalidraw library item)
-- `python3 scripts/annotate_image.py input.png output.png --spec spec.json`
-- `python3 scripts/annotate_image.py --spec-help` (prints JSON spec schema)
-- `annotate_image.py` supports top-level `defaults` (e.g., `auto_scale`, `outline`, `text_bg`), `spotlight` annotations to dim the background, `fit` (enabled by default) to auto-adjust rect/spotlight bounds, and `anchor`/`from`/`to` for auto-anchoring labels and arrows.
-- `bash scripts/loop_compare.sh --help`
-- `bash scripts/loop_compare.sh [--loop-dir <path>] [--resize] [--max-diff-percent <0-100>] [--create-baseline|--update-baseline] <current_path> <baseline_name>`
-  - set `SEER_LOOP_DIR` to change default loop directory (default `.seer/loop`)
-  - visual differences fail with exit 1; the default allowed difference is 0%
-  - consider adding `.seer/` to `.gitignore`
+1. Run `python3 scripts/seer doctor --json`. Resolve missing permissions or dependencies before capture.
+2. Run `python3 scripts/seer windows --json` and select the exact process name.
+3. Run `python3 scripts/seer capture --process "AppName" --out .seer/capture/current.png --json`.
+4. Load the returned `artifacts.current` path with `view_image`. Inspect the fresh image before making claims.
+5. Run `python3 scripts/seer verify .seer/capture/current.png <baseline-name> --json`.
+6. Load the returned diff image when status is `fail`, then iterate and capture again.
 
-## Workflow
-1. **Capture**
-   - `scripts/capture_app_window.sh`
-   - If it fails, rerun with explicit process name or verify permissions.
-2. **Record (optional)**
-   - `scripts/record_app_window.sh --duration 3 --frames --fps 20`
-   - `scripts/record_simulator.sh --duration 3 --summary --summary-sheet`
-   - `scripts/record_screen.sh --duration 3`
-   - For long QA runs, prefer `scripts/record_screen.sh --engine ffmpeg --manual-stop`.
-   - Use frames for granular UI change analysis.
-   - `record_app_window.sh` auto-activates when `--process/--simulator` is used and warns if frontmost app differs.
-3. **Compare (optional)**
-   - `scripts/loop_compare.sh <current_path> <baseline_name>`
-   - Stores `baselines/`, `latest/`, `history/`, `diffs/`, `reports/` under `.seer/loop` (or `$SEER_LOOP_DIR`)
-4. **Inspect**
-   - Use `view_image` to load the current image and diff image.
-5. **Iterate**
-   - Repeat after UI changes or window repositioning.
+Never create or replace a baseline without explicit user approval. A missing baseline returns `needs_baseline` (exit 3); after approval, rerun with `--create-baseline`. Treat `--update-baseline` as a destructive approval action.
 
-## Video summary flags (record_app_window.sh --summary)
-- `--summary-mode <scene|fps|keyframes>`: selection strategy (default: `scene`)
-- `--summary-scene <threshold>`: scene-change sensitivity (default: `0.30`)
-- `--summary-fps <n>`: sampling rate for `fps` mode (default: `2`)
-- `--summary-max <n>`: cap frame count (default: `24`, `0` disables cap)
-- `--summary-out <dir>`: output folder
-- `--summary-sheet`: create `sheet.png` contact sheet
-- `--summary-sheet-cols <n>`: contact sheet columns (default: auto)
-- `--summary-gif`: create `preview.gif`
-- `--summary-gif-width <px>`: GIF max width (default: `640`)
+## CLI interface
+
+```text
+python3 scripts/seer doctor --json
+python3 scripts/seer windows --json
+python3 scripts/seer capture [--process NAME] [--out PATH] --json
+python3 scripts/seer verify [--loop-dir DIR] [--resize] [--max-diff-percent N]
+                            [--create-baseline|--update-baseline]
+                            CURRENT BASELINE --json
+```
+
+Commands emit at most one JSON object to stdout and diagnostics to stderr. Exit 0 means pass, 1 means visual fail, 2 means tool/input error, and 3 means `needs_baseline`. The default allowed difference is 0%.
+
+`windows` indexes are informational and unstable. `capture` currently targets the selected process's first window; rerun it after window movement or state changes.
+
+Set `SEER_OUT_DIR` to change `.seer/` output or `SEER_LOOP_DIR` to change only baseline, latest, history, diff, and report storage.
+
+## Optional workflows
+
+- Record a window: `bash scripts/record_app_window.sh --duration 3 --summary --summary-sheet --summary-gif`
+- Record a display or region: `bash scripts/record_screen.sh --help`
+- Summarize video: `bash scripts/summarize_video.sh <video.mov> --mode scene --sheet --gif`
+- Annotate a screenshot: `bash scripts/mockup_ui.sh --spec spec.json --json`
+- Generate an Excalidraw scene: `python3 scripts/excalidraw_from_text.py --help`
+- Type into an app: inspect `bash scripts/type_into_app.sh --help`, then invoke only after explicit approval because it changes app state.
+
+Use `--help` on specialist scripts for their complete options. Pillow is required for image diff and annotation; ffmpeg and ffprobe are optional for video workflows.
 
 ## Resources
-### scripts/
-- `capture_app_window.sh`: grabs window bounds via System Events and runs `screencapture -x -R`.
-- `record_app_window.sh`: records a window region to `.mov` via `screencapture -v` (optionally extracts frames).
-- `record_simulator.sh`: convenience wrapper for iOS Simulator recording.
-- `record_screen.sh`: records full screen or a region via `screencapture` or `ffmpeg` (`avfoundation`).
-- `extract_frames.sh`: extracts frames from a video via `ffmpeg`.
-- `summarize_video.sh`: extracts representative frames (scene/fps/keyframes) + optional contact sheet or GIF (falls back to fps when scene yields too few frames).
-- `type_into_app.sh`: focuses app and types text via System Events keystrokes.
-- `excalidraw_from_text.py`: converts a natural-language-ish prompt into a `.excalidraw` scene file under `.seer/excalidraw/` (supports `screen: Name` for multi-screen; uses the bundled Excalidraw library when present).
-- `annotate_image.py`: draws arrows, rectangles, and text on an image (requires `python3 -m pip install pillow`).
-- `mockup_ui.sh`: capture window (optional) then annotate using a JSON spec.
-- `compare_images.py`: compares baseline vs current and emits diff metrics + optional diff image (requires `python3 -m pip install pillow`).
-- `loop_compare.sh`: manages baselines, history, and diff outputs for visual regression loops.
 
-### assets/
-- `assets/excalidraw/wireframe-ui-kit.excalidrawlib`: default Excalidraw UI library used by `excalidraw_from_text.py` when present (override with `--library` or disable with `--no-library`).
-- `assets/excalidraw/basic-ux-wireframing-elements.excalidrawlib`: fallback library (smaller) if the UI kit is missing.
-
-## Output layout (default)
-Under `.seer/`:
-- `capture/` window screenshots
-- `record/` window recordings + extracted frame folders
-- `record/` video summaries + contact sheets/GIFs
-- `mockup/` annotated mockups + their capture/spec/meta (also writes `latest-*` convenience copies)
-- `excalidraw/` generated `.excalidraw` scenes (also writes `latest-*.excalidraw`)
-- `loop/` visual regression loop storage (baselines/latest/history/diffs/reports)
+- `scripts/seer`: machine-readable entry point; delegates capture and verification to existing scripts.
+- `scripts/capture_app_window.sh`: captures the first window of a process.
+- `scripts/loop_compare.sh` and `scripts/compare_images.py`: manage approved baselines and exact pixel comparisons.
+- `scripts/record_app_window.sh`, `scripts/record_screen.sh`, `scripts/summarize_video.sh`: video evidence.
+- `scripts/mockup_ui.sh`, `scripts/annotate_image.py`: annotations.
+- `scripts/excalidraw_from_text.py`: local wireframes.
+- `scripts/type_into_app.sh`: explicit state-changing typing.

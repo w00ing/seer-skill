@@ -2,7 +2,7 @@
 
 **Visual verification for coding agents on macOS.**
 
-Seer gives Codex and Claude Code a repeatable native-UI feedback loop: capture a running app window, inspect the visible result, and compare it with an explicitly approved baseline. Screenshots, diffs, recordings, and machine-readable reports stay local under `.seer/`.
+Seer gives Codex and Claude Code one machine-readable CLI for a repeatable native-UI feedback loop: check capabilities, find a window, capture it, inspect the visible result, and compare it with an explicitly approved baseline. Screenshots, diffs, recordings, and reports stay local under `.seer/`.
 
 Seer is an evidence layer, not another desktop automation framework. Your agent changes the code; Seer verifies what actually appeared on screen.
 
@@ -60,31 +60,36 @@ source .local/venv/bin/activate
 python -m pip install pillow
 ```
 
-Then run the underlying scripts directly from a clone:
+Then run the shipped CLI from a clone:
 
 ```bash
-current=$(bash skills/seer/scripts/capture_app_window.sh)
+SEER=skills/seer/scripts/seer
+
+"$SEER" doctor --json
+"$SEER" windows --json
+"$SEER" capture --process "Preview" --out .seer/capture/current.png --json
 
 # No baseline is silently approved. This returns needs_baseline (exit 3).
-bash skills/seer/scripts/loop_compare.sh "$current" settings
+"$SEER" verify .seer/capture/current.png settings --json
 
-# Create it only after reviewing the capture.
-bash skills/seer/scripts/loop_compare.sh --create-baseline "$current" settings
+# Inspect current.png, then create a baseline only after approval.
+"$SEER" verify .seer/capture/current.png settings --create-baseline --json
 
 # After a UI change, allow at most 0.5% changed pixels.
-current=$(bash skills/seer/scripts/capture_app_window.sh)
-bash skills/seer/scripts/loop_compare.sh --max-diff-percent 0.5 "$current" settings
+"$SEER" capture --process "Preview" --out .seer/capture/current.png --json
+"$SEER" verify .seer/capture/current.png settings --max-diff-percent 0.5 --json
 ```
 
-Verification prints one JSON object to stdout and writes the current image, diff, history, and report under `.seer/loop/`.
+Each command emits at most one JSON object to stdout; diagnostics go to stderr. Capture paths are returned as `artifacts.current`. Verification writes the current image, diff, history, and report under `.seer/loop/`.
 
 | Status | Exit | Meaning |
 |---|---:|---|
 | `pass` | 0 | Changed pixels are within the allowed threshold. |
 | `fail` | 1 | The visual difference exceeds the threshold. |
+| `error` | 2 | A command, permission, dependency, or input failed. |
 | `needs_baseline` | 3 | No approved baseline exists; Seer did not create one. |
 
-The default threshold is 0%. Other tool or input errors return non-zero and write diagnostics to stderr.
+The default threshold is 0%. A failed `doctor` still emits its capability report with `status: error`; other failures may leave stdout empty.
 
 ## Demo
 
@@ -96,16 +101,19 @@ The default threshold is 0%. Other tool or input errors return non-zero and writ
 
 | Task | Command |
 |---|---|
-| Capture a visible app window | `bash skills/seer/scripts/capture_app_window.sh` |
-| Verify against a named baseline | `bash skills/seer/scripts/loop_compare.sh <current.png> <name>` |
+| Check required capabilities | `skills/seer/scripts/seer doctor --json` |
+| List visible app windows | `skills/seer/scripts/seer windows --json` |
+| Capture a visible app window | `skills/seer/scripts/seer capture --process <name> --json` |
+| Verify against a named baseline | `skills/seer/scripts/seer verify <current.png> <name> --json` |
 | Record a short app flow | `bash skills/seer/scripts/record_app_window.sh --duration 3` |
 | Summarize a recording | `bash skills/seer/scripts/summarize_video.sh <video.mov> --sheet --gif` |
 
-Use `--help` on any command for its complete options. Pillow is required for image comparison and annotation; ffmpeg and ffprobe are optional unless you use video workflows.
+Use `--help` on the CLI or a subcommand for complete options. `windows` reports a 1-based index, but capture currently targets the selected process's first window; stable window IDs are not yet supported. Pillow is required for image comparison and annotation; ffmpeg and ffprobe are optional unless you use video workflows.
 
 ## Advanced workflows
 
 - `record_screen.sh`: full-display or region recording, including manual-stop ffmpeg capture.
+- `capture_app_window.sh` and `loop_compare.sh`: lower-level capture and visual-loop commands used by the unified CLI.
 - `extract_frames.sh`: fixed-FPS frame extraction.
 - `mockup_ui.sh` and `annotate_image.py`: screenshot annotations; run `annotate_image.py --spec-help` for the JSON schema.
 - `excalidraw_from_text.py`: natural-language-to-Excalidraw wireframes. See [Excalidraw wireframing](docs/excalidraw-wireframing.md).
@@ -135,7 +143,7 @@ Set `SEER_OUT_DIR` to change the output root or `SEER_LOOP_DIR` to change only v
 
 - `error: window not found`: start the app, check its process name, and ensure it has a visible window.
 - Empty or black capture: grant Screen Recording permission to the terminal running the agent.
-- Wrong window: pass the exact process name to `capture_app_window.sh`.
+- Wrong window: use `windows --json`, then pass the exact process name to `capture`.
 - Typing fails: grant Accessibility and Automation → System Events permissions.
 - Diff command reports missing Pillow: install it in the `python3` environment used by Seer.
 

@@ -39,6 +39,10 @@ update_baseline=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --loop-dir)
+      if [[ $# -lt 2 ]]; then
+        echo "error: --loop-dir requires a value" >&2
+        exit 2
+      fi
       loop_dir="$2"
       shift 2
       ;;
@@ -73,7 +77,7 @@ while [[ $# -gt 0 ]]; do
     -*)
       echo "error: unknown option: $1" >&2
       usage >&2
-      exit 1
+      exit 2
       ;;
     *)
       break
@@ -86,17 +90,17 @@ baseline_name=${2:-}
 
 if [[ -z "${current}" || -z "${baseline_name}" ]]; then
   usage >&2
-  exit 1
+  exit 2
 fi
 
 if [[ ! -f "${current}" ]]; then
   echo "error: current image not found: ${current}" >&2
-  exit 1
+  exit 2
 fi
 
 if [[ ${create_baseline} -eq 1 && ${update_baseline} -eq 1 ]]; then
   echo "error: --create-baseline and --update-baseline cannot be used together" >&2
-  exit 1
+  exit 2
 fi
 
 validated_threshold=$(python3 - "${max_diff_percent}" <<'PY'
@@ -194,7 +198,7 @@ fi
 
 if [[ ${create_baseline} -eq 1 ]]; then
   echo "error: baseline already exists: ${baseline_path}; use --update-baseline to replace it" >&2
-  exit 1
+  exit 2
 fi
 
 compare_args=(
