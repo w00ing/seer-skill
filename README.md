@@ -119,6 +119,12 @@ Use `--help` on the CLI or a subcommand for complete options. `windows` reports 
 - `excalidraw_from_text.py`: natural-language-to-Excalidraw wireframes. See [Excalidraw wireframing](docs/excalidraw-wireframing.md).
 - `type_into_app.sh`: explicit, state-changing typing through System Events.
 
+### Excalidraw examples
+
+| Generated sign-in wireframe | Explicit library components |
+| --- | --- |
+| ![Generated sign-in wireframe](assets/excalidraw-auth-sign-in.png) | ![Generated library components](assets/excalidraw-library-components.png) |
+
 See [Visual loop internals](docs/visual-loop.md) for the underlying image metrics.
 
 ## Artifact layout
@@ -153,6 +159,7 @@ Set `SEER_OUT_DIR` to change the output root or `SEER_LOOP_DIR` to change only v
 python3 -m venv .local/venv
 .local/venv/bin/python -m pip install pillow
 .local/venv/bin/python -m unittest discover -s tests -v
+python3 skills/seer/scripts/test_excalidraw.py
 ```
 
 Shell scripts are checked on macOS CI. Claude packaging can be validated locally with:

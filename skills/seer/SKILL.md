@@ -43,6 +43,7 @@ Set `SEER_OUT_DIR` to change `.seer/` output or `SEER_LOOP_DIR` to change only b
 - Summarize video: `bash scripts/summarize_video.sh <video.mov> --mode scene --sheet --gif`
 - Annotate a screenshot: `bash scripts/mockup_ui.sh --spec spec.json --json`
 - Generate an Excalidraw scene: `python3 scripts/excalidraw_from_text.py --help`
+- Test Excalidraw generation: `python3 scripts/test_excalidraw.py`
 - Type into an app: inspect `bash scripts/type_into_app.sh --help`, then invoke only after explicit approval because it changes app state.
 
 Use `--help` on specialist scripts for their complete options. Pillow is required for image diff and annotation; ffmpeg and ffprobe are optional for video workflows.
@@ -55,4 +56,5 @@ Use `--help` on specialist scripts for their complete options. Pillow is require
 - `scripts/record_app_window.sh`, `scripts/record_screen.sh`, `scripts/summarize_video.sh`: video evidence.
 - `scripts/mockup_ui.sh`, `scripts/annotate_image.py`: annotations.
 - `scripts/excalidraw_from_text.py`: local wireframes.
+- `scripts/test_excalidraw.py`: dependency-free Excalidraw regression checks.
 - `scripts/type_into_app.sh`: explicit state-changing typing.
