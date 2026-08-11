@@ -155,18 +155,36 @@ def _run_case(
     theme: str,
     fidelity: str,
     preset: str | None,
+    library: Path | None,
+    no_library: bool,
     out_dir: Path,
-    extra_env: dict[str, str],
 ) -> dict[str, Any]:
-    cmd = [sys.executable, str(generator), "--name", case.name, "--json", "--theme", theme, "--fidelity", fidelity]
+    out_path = out_dir / f"{case.name}.excalidraw"
+    cmd = [
+        sys.executable,
+        str(generator),
+        "--name",
+        case.name,
+        "--out",
+        str(out_path),
+        "--json",
+        "--theme",
+        theme,
+        "--fidelity",
+        fidelity,
+    ]
     if preset:
         cmd.extend(["--preset", preset])
+    if library:
+        cmd.extend(["--library", str(library)])
+    if no_library:
+        cmd.append("--no-library")
     p = subprocess.run(
         cmd,
         input=case.prompt.encode("utf-8"),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        env={**os.environ, **extra_env, "SEER_OUT_DIR": str(out_dir.parent)},
+        env=os.environ,
     )
     if p.returncode != 0:
         raise RuntimeError(
@@ -174,9 +192,24 @@ def _run_case(
             f"stderr:\n{p.stderr.decode('utf-8', errors='replace')}\n"
         )
     try:
-        return json.loads(p.stdout.decode("utf-8"))
+        meta = json.loads(p.stdout.decode("utf-8"))
     except Exception as e:
         raise RuntimeError(f"case {case.name} returned non-JSON output: {e}\n{p.stdout!r}") from e
+
+    actual_path = Path(str(meta.get("output_path") or ""))
+    if not actual_path.is_file() or actual_path.parent.resolve() != out_dir.resolve():
+        raise RuntimeError(f"case {case.name} wrote outside --out-dir: {actual_path}")
+    scene = json.loads(actual_path.read_text(encoding="utf-8"))
+    if scene.get("type") != "excalidraw" or scene.get("version") != 2 or not isinstance(scene.get("elements"), list):
+        raise RuntimeError(f"case {case.name} produced an invalid Excalidraw scene")
+    if scene.get("scrollToContent") is not True:
+        raise RuntimeError(f"case {case.name} did not request initial content centering")
+    if {"scrollX", "scrollY", "zoom"} & set(scene.get("appState") or {}):
+        raise RuntimeError(f"case {case.name} emitted viewport-dependent appState")
+    library_used = meta.get("library_used") or {}
+    if library_used.get("loaded") and int(library_used.get("elements_total") or 0) <= 0:
+        raise RuntimeError(f"case {case.name} loaded a library but used no library elements")
+    return meta
 
 
 def main(argv: list[str]) -> int:
@@ -185,9 +218,19 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--theme", default="classic", help="Theme passed to excalidraw_from_text.py")
     parser.add_argument("--fidelity", default="medium", choices=["low", "medium", "high"], help="Fidelity passed to excalidraw_from_text.py")
     parser.add_argument("--preset", default=None, choices=["mobile", "tablet", "desktop"], help="Preset passed to excalidraw_from_text.py")
+    parser.add_argument("--library", default=None, help="Library passed to excalidraw_from_text.py")
+    parser.add_argument("--no-library", action="store_true", help="Disable library usage")
     parser.add_argument("--filter", default=None, help="Only run cases whose name matches this regex")
     parser.add_argument("--manifest", default=None, help="Write a JSON manifest of outputs to this file")
     args = parser.parse_args(argv)
+
+    if args.library and args.no_library:
+        print("error: pass only one of --library or --no-library", file=sys.stderr)
+        return 2
+    library_path = Path(args.library).expanduser() if args.library else None
+    if library_path and not library_path.is_file():
+        print(f"error: library not found: {library_path}", file=sys.stderr)
+        return 2
 
     generator = _excalidraw_generator()
     if not generator.exists():
@@ -195,27 +238,59 @@ def main(argv: list[str]) -> int:
         return 2
 
     out_dir = Path(args.out_dir).expanduser() if args.out_dir else _default_out_dir()
-    out_dir.mkdir(parents=True, exist_ok=True)
-
     cases = _suite_cases()
     if args.filter:
-        rx = re.compile(args.filter)
+        try:
+            rx = re.compile(args.filter)
+        except re.error as e:
+            print(f"error: invalid --filter regex: {e}", file=sys.stderr)
+            return 2
         cases = [c for c in cases if rx.search(c.name)]
         if not cases:
             print(f"error: no suite cases matched filter: {args.filter}", file=sys.stderr)
             return 2
 
+    manifest_path = Path(args.manifest).expanduser() if args.manifest else (out_dir / "suite-manifest.json")
+    out_dir_resolved = out_dir.resolve()
+    manifest_resolved = manifest_path.resolve()
+    generated_paths = {
+        path.resolve()
+        for case in cases
+        for path in (out_dir / f"{case.name}.excalidraw", out_dir / f"latest-{case.name}.excalidraw")
+    }
+    if manifest_path.is_dir():
+        print(f"error: manifest path is a directory: {manifest_path}", file=sys.stderr)
+        return 2
+    if (
+        manifest_resolved == out_dir_resolved
+        or manifest_resolved in out_dir_resolved.parents
+        or any(path == manifest_resolved or path in manifest_resolved.parents for path in generated_paths)
+    ):
+        print(f"error: manifest path collides with suite outputs: {manifest_path}", file=sys.stderr)
+        return 2
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        print(f"error: cannot create output directory: {e}", file=sys.stderr)
+        return 2
+
     results: list[dict[str, Any]] = []
     for case in cases:
-        meta = _run_case(
-            generator=generator,
-            case=case,
-            theme=args.theme,
-            fidelity=args.fidelity,
-            preset=args.preset,
-            out_dir=out_dir,
-            extra_env={},
-        )
+        try:
+            meta = _run_case(
+                generator=generator,
+                case=case,
+                theme=args.theme,
+                fidelity=args.fidelity,
+                preset=args.preset,
+                library=library_path,
+                no_library=args.no_library,
+                out_dir=out_dir,
+            )
+        except RuntimeError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
         results.append(
             {
                 "name": case.name,
@@ -226,8 +301,11 @@ def main(argv: list[str]) -> int:
             }
         )
 
-    manifest_path = Path(args.manifest).expanduser() if args.manifest else (out_dir / "suite-manifest.json")
-    manifest_path.write_text(json.dumps({"generated": results}, indent=2), encoding="utf-8")
+    try:
+        manifest_path.write_text(json.dumps({"generated": results}, indent=2), encoding="utf-8")
+    except OSError as e:
+        print(f"error: failed to write manifest {manifest_path}: {e}", file=sys.stderr)
+        return 2
 
     print(json.dumps({"count": len(results), "manifest": str(manifest_path), "cases": results}, indent=2))
     return 0
@@ -235,4 +313,3 @@ def main(argv: list[str]) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
-

@@ -8,7 +8,9 @@ import os
 import random
 import re
 import sys
+import textwrap
 import time
+import unicodedata
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -154,15 +156,49 @@ def _round_to(value: float, step: int) -> int:
 def _text_size(text: str, font_size: int) -> tuple[int, int]:
     # Excalidraw will usually recalc text metrics; keep this conservative.
     lines = text.splitlines() or [""]
-    max_len = max((len(line) for line in lines), default=0)
-    width = int(max(24, min(2400, max_len * font_size * 0.62)))
+    max_units = max((_text_units(line) for line in lines), default=0.0)
+    width = int(max(24, min(2400, max_units * font_size * 0.62)))
     height = int(max(font_size + 8, len(lines) * font_size * 1.35))
     return width, height
 
 
+def _text_units(text: str) -> float:
+    return sum(
+        0 if unicodedata.combining(char) else 1.65 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+        for char in text
+    )
+
+
 def _calc_label_width(text: str, font_size: int) -> int:
-    # BMAD heuristic: (len × fontSize × 0.6) + 20, rounded to 10px.
-    return _round_to(len(text) * font_size * 0.6 + 20, 10)
+    # BMAD heuristic with wider units for CJK glyphs, rounded to 10px.
+    return _round_to(_text_units(text) * font_size * 0.6 + 20, 10)
+
+
+def _wrap_text_to_width(text: str, max_width: float, font_size: int) -> str:
+    unit_width = 1.65 if any(unicodedata.east_asian_width(char) in ("W", "F") for char in text) else 1
+    max_chars = max(1, int(max_width / max(1.0, font_size * 0.62 * unit_width)))
+    wrapped: list[str] = []
+    for line in text.splitlines() or [""]:
+        wrapped.extend(
+            textwrap.wrap(
+                line,
+                width=max_chars,
+                break_long_words=True,
+                break_on_hyphens=False,
+                replace_whitespace=False,
+            )
+            or [""]
+        )
+    return "\n".join(wrapped)
+
+
+def _ellipsize_to_width(text: str, max_width: float, font_size: int) -> str:
+    text = " ".join(text.split())
+    if _calc_label_width(text, font_size) <= max_width:
+        return text
+    unit_width = 1.65 if any(unicodedata.east_asian_width(char) in ("W", "F") for char in text) else 1
+    max_chars = max(2, int((max_width - 20) / max(1.0, font_size * 0.6 * unit_width)))
+    return text[: max_chars - 1].rstrip() + "…"
 
 
 def _bbox_for_element(el: dict[str, Any]) -> tuple[float, float, float, float]:
@@ -200,7 +236,11 @@ class LibraryItem:
 class ExcalidrawLibrary:
     def __init__(self, items: list[LibraryItem]):
         self._items = items
-        self._by_name: dict[str, LibraryItem] = {it.name.strip().lower(): it for it in items if it.name}
+        self._by_name: dict[str, LibraryItem] = {}
+        for item in items:
+            if item.name:
+                # The bundled kits contain icon-only duplicates after their labeled variants.
+                self._by_name.setdefault(item.name.strip().lower(), item)
 
     @property
     def items(self) -> list[LibraryItem]:
@@ -240,14 +280,14 @@ def load_excalidraw_library(path: Path) -> ExcalidrawLibrary:
 DEFAULT_LIBRARY_COMPONENT_QUERIES: dict[str, list[str]] = {
     # Keep this conservative: only use library items that are easy to label reliably.
     "header": ["navigation bar"],
-    "button": ["button", "Filled button (text only)", "Outlined button (text only)"],
-    "input": ["textfield", "Text field with placeholder", "Text field with text", "search", "Search field"],
+    "button": ["Filled button (text only)", "Outlined button (text only)", "button"],
+    "input": ["Search field", "textfield", "Text field with placeholder", "Text field with text", "search"],
     "tabs": ["tabs"],
-    "dropdown": ["dropdown", "select"],
-    "textarea": ["textarea"],
-    "checkbox": ["checkbox-off", "checkbox-on", "Checkbox Unchecked", "Checkbox Checked"],
-    "radio": ["radiobutton-off"],
-    "toggle": ["toggle-off"],
+    "dropdown": ["Dropdown menu", "dropdown", "select"],
+    "textarea": ["textarea", "Text area with placeholder", "Text area"],
+    "checkbox": ["checkbox-off", "checkbox-on", "Checkbox (text+icon)", "Selected checkbox (text+icon)"],
+    "radio": ["radiobutton-off", "Radio button (text+icon)", "Selected radio button (text+icon)"],
+    "toggle": ["toggle-off", "Boxed toggle with text (OFF)", "Boxed toggle with text (ON)"],
     "chips": ["chips"],
     "card": ["banner", "carousel banner"],
     "image": ["product image", "gallery-3-a", "gallery-3-b", "Image placeholder", "Image placeholder (simple)"],
@@ -268,14 +308,14 @@ def _pick_library_item_for_component(
 
     # Small heuristics to pick better primitives.
     if component_type == "input" and label:
+        if "search" in label:
+            it = library.find("Search field") or library.find("search") or library.find("Search Input")
+            if it:
+                return it
         # Prefer a plain text field for non-search inputs.
         it = library.find("textfield") or library.find("Text field with placeholder") or library.find("Text field with text")
         if it:
             return it
-        if "search" in label:
-            it = library.find("search") or library.find("Search field") or library.find("Search Input")
-            if it:
-                return it
 
     if component_type == "header":
         it = library.find("navigation bar")
@@ -283,44 +323,44 @@ def _pick_library_item_for_component(
             return it
 
     if component_type == "button":
-        it = library.find("button") or library.find("Filled button (text only)") or library.find("Outlined button (text only)")
+        it = library.find("Filled button (text only)") or library.find("Outlined button (text only)") or library.find("button")
         if it:
             return it
 
     if component_type == "dropdown":
-        it = library.find("dropdown") or library.find("select")
+        it = library.find("Dropdown menu") or library.find("dropdown") or library.find("select")
         if it:
             return it
 
     if component_type == "textarea":
-        it = library.find("textarea")
+        it = library.find("textarea") or library.find("Text area with placeholder") or library.find("Text area")
         if it:
             return it
 
     if component_type == "checkbox":
         if label and _looks_truthy(label) and not _looks_falsy(label):
-            it = library.find("checkbox-on") or library.find("Checkbox Checked")
+            it = library.find("checkbox-on") or library.find("Selected checkbox (text+icon)")
             if it:
                 return it
-        it = library.find("checkbox-off") or library.find("Checkbox Unchecked")
+        it = library.find("checkbox-off") or library.find("Checkbox (text+icon)")
         if it:
             return it
 
     if component_type == "radio":
         if label and _looks_truthy(label) and not _looks_falsy(label):
-            it = library.find("radiobutton-on")
+            it = library.find("radiobutton-on") or library.find("Selected radio button (text+icon)")
             if it:
                 return it
-        it = library.find("radiobutton-off")
+        it = library.find("radiobutton-off") or library.find("Radio button (text+icon)")
         if it:
             return it
 
     if component_type == "toggle":
         if label and _looks_truthy(label) and not _looks_falsy(label):
-            it = library.find("toggle-on")
+            it = library.find("toggle-on") or library.find("Boxed toggle with text (ON)")
             if it:
                 return it
-        it = library.find("toggle-off")
+        it = library.find("toggle-off") or library.find("Boxed toggle with text (OFF)")
         if it:
             return it
 
@@ -356,13 +396,19 @@ def _pick_library_item_for_component(
     return None
 
 
-def _rewrite_library_label(builder: "ExcalidrawBuilder", group_elements: list[dict[str, Any]], new_text: str) -> None:
+def _rewrite_library_label(
+    builder: "ExcalidrawBuilder",
+    group_elements: list[dict[str, Any]],
+    new_text: str,
+    *,
+    max_right: float | None = None,
+) -> dict[str, Any] | None:
     new_text = new_text.strip()
     if not new_text:
-        return
+        return None
     texts = [el for el in group_elements if el.get("type") == "text" and isinstance(el.get("text"), str)]
     if not texts:
-        return
+        return None
 
     preferred = {"button", "search", "placeholder", "text", "title", "label", "name"}
 
@@ -374,15 +420,24 @@ def _rewrite_library_label(builder: "ExcalidrawBuilder", group_elements: list[di
         return (s0, float(el.get("width") or 0))
 
     target = sorted(texts, key=score, reverse=True)[0]
-    _set_library_text(builder, group_elements, target, new_text)
+    max_width = max(24, max_right - float(target.get("x") or 0)) if max_right is not None else None
+    _set_library_text(builder, group_elements, target, new_text, max_width=max_width)
+    return target
 
-def _set_library_text(builder: "ExcalidrawBuilder", group_elements: list[dict[str, Any]], target: dict[str, Any], new_text: str) -> None:
+def _set_library_text(
+    builder: "ExcalidrawBuilder",
+    group_elements: list[dict[str, Any]],
+    target: dict[str, Any],
+    new_text: str,
+    *,
+    max_width: float | None = None,
+) -> None:
     new_text = (new_text or "").strip()
     if not new_text:
         return
-
-    target["text"] = new_text
-    target["originalText"] = new_text
+    if max_width is not None:
+        font_size = int(float(target.get("fontSize") or 16))
+        new_text = _ellipsize_to_width(new_text, max_width, font_size)
 
     container_id = target.get("containerId")
     if container_id:
@@ -395,8 +450,9 @@ def _set_library_text(builder: "ExcalidrawBuilder", group_elements: list[dict[st
             cy = float(container.get("y") or 0)
 
             font_size = int(float(target.get("fontSize") or 16))
-            new_w = min(int(cw - builder.grid * 2), _calc_label_width(new_text, font_size))
-            new_w = max(24, new_w)
+            inner_w = max(24, int(cw - 16))
+            new_text = _ellipsize_to_width(new_text, inner_w, font_size)
+            new_w = max(24, min(inner_w, _calc_label_width(new_text, font_size)))
             target["width"] = float(_round_to(new_w, 10))
 
             if target.get("textAlign") == "center":
@@ -404,7 +460,7 @@ def _set_library_text(builder: "ExcalidrawBuilder", group_elements: list[dict[st
                 target["x"] = float(_round_to(cx + (cw - float(target["width"])) / 2, 1))
                 target["y"] = float(_round_to(cy + (ch - float(target.get("height") or 20)) / 2, 1))
             else:
-                target["x"] = float(_round_to(cx + builder.grid, 1))
+                target["x"] = float(_round_to(cx + 8, 1))
     else:
         # Standalone library text often has a fixed width; update it to avoid clipping.
         try:
@@ -414,8 +470,17 @@ def _set_library_text(builder: "ExcalidrawBuilder", group_elements: list[dict[st
         target["width"] = float(_round_to(_calc_label_width(new_text, font_size), 10))
         target["height"] = float(_round_to(max(float(target.get("height") or 0), font_size * 1.6), 10))
 
+    target["text"] = new_text
+    target["originalText"] = new_text
 
-def _rewrite_library_tabs_labels(builder: "ExcalidrawBuilder", group_elements: list[dict[str, Any]], labels: list[str]) -> None:
+
+def _rewrite_library_tabs_labels(
+    builder: "ExcalidrawBuilder",
+    group_elements: list[dict[str, Any]],
+    labels: list[str],
+    *,
+    max_width: float | None = None,
+) -> None:
     labels = [l.strip() for l in labels if l.strip()]
     if not labels:
         return
@@ -427,13 +492,21 @@ def _rewrite_library_tabs_labels(builder: "ExcalidrawBuilder", group_elements: l
     texts = sorted(texts, key=lambda el: float(el.get("x") or 0))
     labels = labels[: len(texts)]
 
-    by_id = {el.get("id"): el for el in group_elements if isinstance(el.get("id"), str)}
+    for index, el in enumerate(texts):
+        if index >= len(labels):
+            el["opacity"] = 0
+            continue
+        label = labels[index]
+        _set_library_text(builder, group_elements, el, label, max_width=max_width)
 
-    for el, label in zip(texts, labels, strict=False):
-        _set_library_text(builder, group_elements, el, label)
 
-
-def _rewrite_library_section_title(builder: "ExcalidrawBuilder", group_elements: list[dict[str, Any]], title: str) -> None:
+def _rewrite_library_section_title(
+    builder: "ExcalidrawBuilder",
+    group_elements: list[dict[str, Any]],
+    title: str,
+    *,
+    max_right: float | None = None,
+) -> None:
     title = (title or "").strip()
     if not title:
         return
@@ -442,13 +515,20 @@ def _rewrite_library_section_title(builder: "ExcalidrawBuilder", group_elements:
         return
     texts = sorted(texts, key=lambda el: (float(el.get("y") or 0), float(el.get("x") or 0)))
     # First line becomes the title; hide the optional "View All >" if present.
-    _set_library_text(builder, group_elements, texts[0], title.upper())
+    max_width = max(24, max_right - float(texts[0].get("x") or 0)) if max_right is not None else None
+    _set_library_text(builder, group_elements, texts[0], title.upper(), max_width=max_width)
     if len(texts) > 1:
         # Hide but keep for consistency.
         texts[1]["opacity"] = 0
 
 
-def _rewrite_library_footer_labels(builder: "ExcalidrawBuilder", group_elements: list[dict[str, Any]], labels: list[str]) -> None:
+def _rewrite_library_footer_labels(
+    builder: "ExcalidrawBuilder",
+    group_elements: list[dict[str, Any]],
+    labels: list[str],
+    *,
+    max_width: float | None = None,
+) -> None:
     labels = [l.strip() for l in labels if l.strip()]
     if not labels:
         return
@@ -466,6 +546,8 @@ def _rewrite_library_footer_labels(builder: "ExcalidrawBuilder", group_elements:
             font_size = int(float(el.get("fontSize") or 12))
         except Exception:
             font_size = 12
+        if max_width is not None:
+            new_text = _ellipsize_to_width(new_text, max_width, font_size)
         new_w = float(_round_to(_calc_label_width(new_text, font_size), 10))
         el["text"] = new_text
         el["originalText"] = new_text
@@ -480,6 +562,7 @@ def _rewrite_library_label_and_placeholder(
     *,
     label: str,
     placeholder: str,
+    max_right: float | None = None,
 ) -> None:
     label = (label or "").strip()
     placeholder = (placeholder or "").strip()
@@ -495,7 +578,12 @@ def _rewrite_library_label_and_placeholder(
 
     if label and label_targets:
         target = sorted(label_targets, key=lambda el: (float(el.get("y") or 0), -float(el.get("width") or 0)))[0]
-        _set_library_text(builder, group_elements, target, label)
+        max_width = max(24, max_right - float(target.get("x") or 0)) if max_right is not None else None
+        _set_library_text(builder, group_elements, target, label, max_width=max_width)
+    elif placeholder and not placeholder_targets and label_targets:
+        target = sorted(label_targets, key=lambda el: (float(el.get("y") or 0), -float(el.get("width") or 0)))[0]
+        max_width = max(24, max_right - float(target.get("x") or 0)) if max_right is not None else None
+        _set_library_text(builder, group_elements, target, placeholder, max_width=max_width)
     elif label_targets:
         for el in label_targets:
             el["opacity"] = 0
@@ -503,7 +591,8 @@ def _rewrite_library_label_and_placeholder(
     if placeholder and placeholder_targets:
         # Prefer the widest placeholder.
         target = sorted(placeholder_targets, key=lambda el: float(el.get("width") or 0), reverse=True)[0]
-        _set_library_text(builder, group_elements, target, placeholder)
+        max_width = max(24, max_right - float(target.get("x") or 0)) if max_right is not None else None
+        _set_library_text(builder, group_elements, target, placeholder, max_width=max_width)
 
 
 def instantiate_library_item(
@@ -563,8 +652,12 @@ def instantiate_library_item(
             el["y"] = float(_round_to(float(el["y"]) + dy, 1))
 
         container_id = el.get("containerId")
-        if isinstance(container_id, str) and container_id in id_map:
-            el["containerId"] = id_map[container_id]
+        if isinstance(container_id, str):
+            el["containerId"] = id_map.get(container_id)
+
+        frame_id = el.get("frameId")
+        if isinstance(frame_id, str):
+            el["frameId"] = id_map.get(frame_id)
 
         if isinstance(el.get("boundElements"), list):
             new_bound = []
@@ -575,7 +668,7 @@ def instantiate_library_item(
                 if isinstance(bid, str) and bid in id_map:
                     b = dict(b)
                     b["id"] = id_map[bid]
-                new_bound.append(b)
+                    new_bound.append(b)
             el["boundElements"] = new_bound
 
         for key in ("startBinding", "endBinding"):
@@ -586,6 +679,8 @@ def instantiate_library_item(
                     b = dict(b)
                     b["elementId"] = id_map[eid]
                     el[key] = b
+                else:
+                    el[key] = None
 
     # Normalize container/text invariants.
     by_id = {el.get("id"): el for el in copied if isinstance(el.get("id"), str)}
@@ -686,8 +781,8 @@ class ExcalidrawBuilder:
             "type": "rectangle",
             "x": float(self.snap(x)),
             "y": float(self.snap(y)),
-            "width": float(self.snap(w)),
-            "height": float(self.snap(h)),
+            "width": float(w),
+            "height": float(h),
             "angle": 0,
             "strokeColor": style["strokeColor"],
             "backgroundColor": style["backgroundColor"],
@@ -827,7 +922,8 @@ class ExcalidrawBuilder:
         rect["groupIds"] = [group_id]
 
         label_color = label_color or self._theme.text
-        label_width = _calc_label_width(text, font_size)
+        text = _ellipsize_to_width(text, max(24, float(rect["width"]) - self.grid * 2), font_size)
+        label_width = min(_calc_label_width(text, font_size), max(24, int(float(rect["width"]) - self.grid * 2)))
         label_height = _round_to(font_size * 1.6, 10)
 
         rx = float(rect["x"])
@@ -1084,6 +1180,28 @@ def _normalize_card_group(
         _set_library_text(builder, group, text_el, str(text_el.get("text") or ""))
 
 
+def _normalize_chip_group(
+    builder: ExcalidrawBuilder,
+    group: list[dict[str, Any]],
+    label: str,
+    *,
+    max_width: float | None = None,
+) -> None:
+    rect = next((el for el in group if el.get("type") == "rectangle" and el.get("boundElements")), None)
+    if not rect:
+        _rewrite_library_label(builder, group, label)
+        return
+    texts = [el for el in group if el.get("type") == "text"]
+    font_size = int(float(texts[0].get("fontSize") or 14)) if texts else 14
+    if max_width is not None:
+        label = _ellipsize_to_width(label, max(24, max_width - 16), font_size)
+    desired_width = _calc_label_width(label, font_size) + 16
+    if max_width is not None:
+        desired_width = min(max_width, desired_width)
+    rect["width"] = float(max(float(rect.get("width") or 0), desired_width))
+    _rewrite_library_label(builder, group, label)
+
+
 def _normalize_header_group(
     builder: ExcalidrawBuilder,
     group: list[dict[str, Any]],
@@ -1206,7 +1324,14 @@ def _iter_phrases(text: str) -> Iterable[str]:
             yield re.sub(r"^[-*•]\s*", "", ln).strip()
         return
 
-    parts = [p.strip() for p in re.split(r"[;|]+", text) if p.strip()]
+    # Keep label pipes (`tabs: A | B`), but preserve the old `header: A | button: B` shorthand.
+    component = "|".join(map(re.escape, COMPONENT_TYPES))
+    parts = [
+        part.strip()
+        for chunk in text.split(";")
+        for part in re.split(rf"\s*\|\s*(?=(?:{component})\s*[:\-])", chunk, flags=re.I)
+        if part.strip()
+    ]
     if len(parts) == 1:
         parts = [p.strip() for p in re.split(r"\.\s+", text) if p.strip()]
     for p in parts:
@@ -1276,6 +1401,21 @@ def _layout_screen(
     margin = g
     gap = g
     pad = g
+    height_by_type = {
+        "header": 60,
+        "tabs": 48,
+        "input": 52,
+        "button": 52,
+        "dropdown": 52,
+        "textarea": 120,
+        "checkbox": 40,
+        "radio": 40,
+        "toggle": 40,
+        "card": 140,
+        "list": 160,
+        "image": 160,
+        "footer": 80,
+    }
 
     elements: list[dict[str, Any]] = []
 
@@ -1297,7 +1437,46 @@ def _layout_screen(
 
     content_x = screen_x + margin
     content_w = screen_w - margin * 2
+    content_right = content_x + content_w
+    content_bottom = screen_y + screen_h - margin
     y = screen_y + margin
+
+    def omit_rest() -> None:
+        text = _ellipsize_to_width("(more omitted…)", content_w, 14)
+        text_w, text_h = _text_size(text, 14)
+        marker = builder.text(
+            x=content_x,
+            y=content_bottom,
+            text=text,
+            font_size=14,
+            color=builder.theme.muted_text,
+            width=min(content_w, text_w),
+            height=text_h,
+        )
+        marker["customData"] = {"seerLabel": "omitted"}
+        marker["y"] = float(content_bottom)
+        elements.append(marker)
+
+    def append_wrapped_text(text: str, color: str) -> bool:
+        nonlocal y
+        text = _wrap_text_to_width(text, content_w, 16)
+        text_w, text_h = _text_size(text, 16)
+        text_h = _round_to(text_h, 10)
+        if builder.snap(y) + text_h > content_bottom:
+            return False
+        elements.append(
+            builder.text(
+                x=content_x,
+                y=y,
+                text=text,
+                font_size=16,
+                color=color,
+                width=min(content_w, text_w),
+                height=text_h,
+            )
+        )
+        y = builder.snap(y + text_h + gap // 2)
+        return True
 
     for phrase in phrases:
         comp_type, value = _parse_component(phrase)
@@ -1305,11 +1484,17 @@ def _layout_screen(
             continue
 
         if comp_type == "divider":
+            if y > content_bottom:
+                omit_rest()
+                break
             elements.append(builder.line(x=content_x, y=y, x2=content_x + content_w, y2=y))
-            y += gap // 2
+            y += gap
             continue
 
         if comp_type == "section":
+            if y + g * 3 > content_bottom:
+                omit_rest()
+                break
             label = value or "Section"
             used = False
             if prefer_library and library:
@@ -1324,22 +1509,36 @@ def _layout_screen(
                         seer_label="section",
                     )
                     _fit_group_to_bounds(builder, group, max_w=content_w, max_h=28)
-                    _rewrite_library_section_title(builder, group, label)
+                    _rewrite_library_section_title(builder, group, label, max_right=content_right)
+                    _fit_group_to_bounds(builder, group, max_w=content_w, max_h=28)
                     elements.extend(group)
                     _, _, _, by1 = _bbox_for_elements(group)
                     y = builder.snap(by1 + builder.grid)
                     used = True
             if not used:
-                elements.append(builder.text(x=content_x + pad, y=y, text=label.upper(), font_size=12, color=builder.theme.muted_text))
+                label_x = content_x + min(pad, max(0, content_w - 24))
+                section_label = _ellipsize_to_width(label.upper(), max(24, content_right - label_x), 12)
+                section_w, section_h = _text_size(section_label, 12)
+                elements.append(
+                    builder.text(
+                        x=label_x,
+                        y=y,
+                        text=section_label,
+                        font_size=12,
+                        color=builder.theme.muted_text,
+                        width=min(content_right - label_x, section_w),
+                        height=section_h,
+                    )
+                )
                 y = builder.snap(y + builder.grid)
             elements.append(builder.line(x=content_x, y=y, x2=content_x + content_w, y2=y))
             y = builder.snap(y + builder.grid)
             continue
 
         if comp_type == "text":
-            label = value or phrase
-            elements.append(builder.text(x=content_x, y=y, text=label, font_size=16, color=builder.theme.text))
-            y += 32
+            if not append_wrapped_text(value or phrase, builder.theme.text):
+                omit_rest()
+                break
             continue
 
         if comp_type == "chips":
@@ -1348,72 +1547,126 @@ def _layout_screen(
                 chip = library.find("chips")
                 if chip and items:
                     x_cursor = content_x
-                    y0 = y
+                    row_y = y
                     max_y1 = y
-                    for it_label in items[:8]:
+                    chip_labels = items[:8] if len(items) <= 8 else items[:7] + [f"+{len(items) - 7}"]
+                    overflowed = False
+                    for it_label in chip_labels:
                         group = instantiate_library_item(
                             builder=builder,
                             item=chip,
                             x=x_cursor,
-                            y=y0,
-                            label_override=it_label,
+                            y=row_y,
+                            label_override=None,
                             seer_label="chips",
                         )
-                        elements.extend(group)
+                        _normalize_chip_group(builder, group, it_label, max_width=content_w)
+                        _fit_group_to_bounds(builder, group, max_w=content_w, max_h=None)
                         gx0, gy0, gx1, gy1 = _bbox_for_elements(group)
+                        if x_cursor > content_x and gx1 > content_right:
+                            row_y = builder.snap(max_y1 + gap)
+                            _offset_group(group, dx=content_x - gx0, dy=row_y - gy0)
+                            gx0, gy0, gx1, gy1 = _bbox_for_elements(group)
+                        if gy1 > content_bottom:
+                            overflowed = True
+                            break
+                        elements.extend(group)
                         x_cursor = builder.snap(gx1 + builder.grid)
                         max_y1 = max(max_y1, gy1)
+                    if overflowed:
+                        omit_rest()
+                        break
                     y = builder.snap(max_y1 + gap)
                     continue
             # Fallback: simple inline list
-            elements.append(builder.text(x=content_x, y=y, text=", ".join(items) or "chips", font_size=16, color=builder.theme.muted_text))
-            y += 32
+            if not append_wrapped_text(", ".join(items) or "chips", builder.theme.muted_text):
+                omit_rest()
+                break
             continue
 
         if comp_type in ("lib", "library"):
             # Syntax:
             #   lib: <Library Item Name>
             #   lib: <Library Item Name> | <label override>
-            parts = [p.strip() for p in value.split("|", 1)]
+            parts = [p.strip() for p in value.split("|")]
             item_name = parts[0] if parts else ""
-            label_override = parts[1] if len(parts) > 1 else None
+            label_overrides = [part for part in parts[1:] if part]
             if library and item_name:
                 item = library.find(item_name)
                 if item:
+                    if content_bottom - y < g:
+                        omit_rest()
+                        break
                     group = instantiate_library_item(
                         builder=builder,
                         item=item,
                         x=content_x,
                         y=y,
-                        label_override=label_override,
+                        label_override=None,
                         seer_label="lib",
                     )
+                    item_name_lower = item.name.strip().lower()
+                    if label_overrides:
+                        if item_name_lower == "tabs":
+                            _rewrite_library_tabs_labels(
+                                builder,
+                                group,
+                                label_overrides,
+                                max_width=max(24, content_w / len(label_overrides) - g),
+                            )
+                        elif item_name_lower == "tab bar":
+                            _rewrite_library_footer_labels(
+                                builder,
+                                group,
+                                label_overrides,
+                                max_width=max(24, content_w / len(label_overrides) - g),
+                            )
+                        else:
+                            target = _rewrite_library_label(builder, group, label_overrides[0], max_right=content_right)
+                            if target:
+                                for text_element in (el for el in group if el.get("type") == "text" and el is not target):
+                                    text_element["opacity"] = 0
+                            else:
+                                gx0, gy0, _, _ = _bbox_for_elements(group)
+                                caption = builder.text(
+                                    x=gx0 + 8,
+                                    y=gy0 + 8,
+                                    text=_ellipsize_to_width(label_overrides[0], max(24, content_w - 16), 14),
+                                    font_size=14,
+                                    color=builder.theme.text,
+                                    width=max(24, content_w - 16),
+                                )
+                                caption["customData"] = {"seerSource": "library", "seerLabel": "lib"}
+                                group.append(caption)
+                    _fit_group_to_bounds(builder, group, max_w=content_w, max_h=content_bottom - y)
+                    gx0, gy0, gx1, gy1 = _bbox_for_elements(group)
+                    _offset_group(group, dx=content_x - gx0, dy=y - gy0)
+                    _apply_theme_to_library_group(builder, group)
+                    _, _, _, gy1 = _bbox_for_elements(group)
+                    if gy1 > content_bottom:
+                        omit_rest()
+                        break
                     elements.extend(group)
-                    _, _, _, by1 = _bbox_for_elements(group)
-                    y = builder.snap(by1 + gap)
+                    y = builder.snap(gy1 + gap)
                     continue
             # Fallback: just render the request as text.
-            elements.append(builder.text(x=content_x, y=y, text=f"lib: {value}", font_size=16, color=builder.theme.muted_text))
-            y += 32
+            if not append_wrapped_text(f"lib: {value}", builder.theme.muted_text):
+                omit_rest()
+                break
             continue
 
-        height_by_type = {
-            "header": 60,
-            "tabs": 48,
-            "input": 52,
-            "button": 52,
-            "dropdown": 52,
-            "textarea": 120,
-            "checkbox": 40,
-            "radio": 40,
-            "toggle": 40,
-            "card": 140,
-            "list": 160,
-            "image": 160,
-            "footer": 80,
-        }
         h = height_by_type.get(comp_type, 80)
         label = (value or comp_type.title()).strip()
+        list_items: list[str] = []
+        if comp_type == "list":
+            raw_items = _split_items(label)
+            list_items = raw_items[:7] if len(raw_items) <= 7 else raw_items[:6] + [f"… {len(raw_items) - 6} more"]
+            row_h = max(builder.grid * 2, 32)
+            h = builder.grid * 2 + row_h * max(1, len(list_items))
+
+        if builder.snap(y) + h > content_bottom:
+            omit_rest()
+            break
 
         if prefer_library and library and comp_type in DEFAULT_LIBRARY_COMPONENT_QUERIES:
             item = _pick_library_item_for_component(library, comp_type, label)
@@ -1477,46 +1730,78 @@ def _layout_screen(
                 if comp_type == "card":
                     _normalize_card_group(builder, group, x=content_x, y=y, w=content_w, h=h)
 
+                if comp_type == "button":
+                    button_w = min(content_w, 320)
+                    _normalize_card_group(
+                        builder,
+                        group,
+                        x=content_x + (content_w - button_w) / 2,
+                        y=y,
+                        w=button_w,
+                        h=h,
+                    )
+
                 if comp_type == "header":
                     _normalize_header_group(builder, group, x=content_x, y=y, w=content_w, h=h)
-
-                if comp_type in ("button", "tabs", "footer"):
-                    gx0, _, gx1, _ = _bbox_for_elements(group)
-                    group_w = gx1 - gx0
-                    if group_w > 0 and group_w < content_w:
-                        _offset_group(group, dx=(content_w - group_w) / 2)
 
                 if comp_type == "tabs":
                     tab_labels = [t.strip() for t in re.split(r"\s*\|\s*", label) if t.strip()]
                     if len(tab_labels) <= 1:
                         tab_labels = _split_items(label) or [label or "Tab"]
-                    _rewrite_library_tabs_labels(builder, group, tab_labels)
+                    _rewrite_library_tabs_labels(
+                        builder,
+                        group,
+                        tab_labels,
+                        max_width=max(24, content_w / len(tab_labels) - g),
+                    )
                 elif comp_type in ("button", "header", "card"):
                     if label:
-                        _rewrite_library_label(builder, group, label)
+                        _rewrite_library_label(builder, group, label, max_right=content_right)
                 elif comp_type == "footer":
                     footer_labels = [t.strip() for t in re.split(r"\s*\|\s*", label) if t.strip()]
                     if len(footer_labels) <= 1:
                         footer_labels = _split_items(label) or []
                     if footer_labels:
-                        _rewrite_library_footer_labels(builder, group, footer_labels)
+                        _rewrite_library_footer_labels(
+                            builder,
+                            group,
+                            footer_labels,
+                            max_width=max(24, content_w / len(footer_labels) - g),
+                        )
                 elif comp_type == "input":
-                    _rewrite_library_label_and_placeholder(builder, group, label="", placeholder=label or "Input")
+                    _rewrite_library_label_and_placeholder(
+                        builder,
+                        group,
+                        label="",
+                        placeholder=label or "Input",
+                        max_right=content_right,
+                    )
                 elif comp_type in ("dropdown", "textarea"):
                     _rewrite_library_label_and_placeholder(
                         builder,
                         group,
                         label=label,
                         placeholder="Select…" if comp_type == "dropdown" else "Enter text…",
+                        max_right=content_right,
                     )
                 elif comp_type in ("checkbox", "radio", "toggle"):
                     # Strip simple state hints from the label.
-                    cleaned = re.sub(r"\((on|off|true|false|enabled|disabled|checked|unchecked)\)", "", label, flags=re.I).strip()
-                    cleaned = re.sub(r"\b(on|off|true|false|enabled|disabled|checked|unchecked)\b", "", cleaned, flags=re.I).strip()
+                    state_words = r"on|off|true|false|enabled|disabled|checked|unchecked|selected|unselected"
+                    cleaned = re.sub(rf"\(({state_words})\)", "", label, flags=re.I).strip()
+                    cleaned = re.sub(rf"\b({state_words})\b", "", cleaned, flags=re.I).strip()
                     if cleaned:
-                        _rewrite_library_label(builder, group, cleaned)
-                elements.extend(group)
+                        _rewrite_library_label(builder, group, cleaned, max_right=content_right)
+                _fit_group_to_bounds(builder, group, max_w=content_w, max_h=max_h)
                 gx0, gy0, gx1, gy1 = _bbox_for_elements(group)
+                if comp_type in ("button", "tabs", "footer"):
+                    _offset_group(group, dx=content_x + (content_w - (gx1 - gx0)) / 2 - gx0)
+                elif gx0 < content_x or gx1 > content_right:
+                    _offset_group(group, dx=content_x - gx0)
+                gx0, gy0, gx1, gy1 = _bbox_for_elements(group)
+                if gx0 < content_x - 1 or gx1 > content_right + 1 or gy1 > content_bottom + 1:
+                    omit_rest()
+                    break
+                elements.extend(group)
                 y = builder.snap(gy1 + gap)
                 continue
 
@@ -1541,8 +1826,8 @@ def _layout_screen(
                 if i > 0:
                     x_sep = content_x + seg_w * i
                     elements.append(builder.line(x=x_sep, y=y, x2=x_sep, y2=y + h))
-                t = tab_labels[i]
-                label_w = _calc_label_width(t, 14)
+                t = _ellipsize_to_width(tab_labels[i], max(24, seg_w - g), 14)
+                label_w = min(_calc_label_width(t, 14), max(24, int(seg_w - g)))
                 label_h = _round_to(14 * 1.6, 10)
                 tx = content_x + seg_w * i + (seg_w - label_w) / 2
                 ty = y + (h - label_h) / 2
@@ -1557,19 +1842,19 @@ def _layout_screen(
             rect = builder.rect(x=content_x, y=y, w=content_w, h=h, roundness=8, seer_label="image")
             rect["fillStyle"] = "cross-hatch"
             elements.append(rect)
-            elements.append(builder.text(x=content_x + pad, y=y + pad, text=label or "Image", font_size=16, color=builder.theme.muted_text))
+            image_label = _ellipsize_to_width(label or "Image", max(24, content_w - pad * 2), 16)
+            elements.append(builder.text(x=content_x + pad, y=y + pad, text=image_label, font_size=16, color=builder.theme.muted_text))
         elif comp_type == "list":
-            items = _split_items(label)
             row_h = max(builder.grid * 2, 32)
-            list_h = builder.grid * 2 + row_h * max(1, len(items))
-            rect = builder.rect(x=content_x, y=y, w=content_w, h=list_h, roundness=8, seer_label="list")
-            _set_rect_bounds(rect, x=content_x, y=y, w=content_w, h=list_h)
+            rect = builder.rect(x=content_x, y=y, w=content_w, h=h, roundness=8, seer_label="list")
+            _set_rect_bounds(rect, x=content_x, y=y, w=content_w, h=h)
             elements.append(rect)
             row_y = y + builder.grid
-            for idx, item in enumerate(items[:7]):
+            for idx, item in enumerate(list_items):
                 if idx > 0:
                     elements.append(builder.line(x=content_x + 8, y=row_y, x2=content_x + content_w - 8, y2=row_y))
                 font_size = 14
+                item = _ellipsize_to_width(item, max(24, content_w - pad * 2), font_size)
                 t_w, t_h = _text_size(item, font_size)
                 baseline = int(font_size * 1.2)
                 text_y = row_y + (row_h / 2) - baseline
@@ -1585,21 +1870,19 @@ def _layout_screen(
                     )
                 )
                 row_y += row_h
-            h = list_h
         else:
             rect, txt = builder.labeled_rect(x=content_x, y=y, w=content_w, h=h, text=label, font_size=16, roundness=8, seer_label=comp_type)
             elements.extend([rect, txt])
 
-        y += h + gap
-        if y > screen_y + screen_h - margin:
-            elements.append(builder.text(x=content_x, y=screen_y + screen_h - margin, text="(more omitted…)", font_size=14, color=builder.theme.muted_text))
-            break
+        y = builder.snap(y + h + gap)
 
     return elements
 
 
 def _validate_scene(scene: dict[str, Any], *, grid: int) -> None:
     elements = scene.get("elements") or []
+    if not isinstance(elements, list):
+        raise ValueError("scene elements must be a list")
     by_id: dict[str, dict[str, Any]] = {}
     for el in elements:
         elid = el.get("id")
@@ -1610,6 +1893,26 @@ def _validate_scene(scene: dict[str, Any], *, grid: int) -> None:
         if el.get("isDeleted") is True:
             raise ValueError(f"isDeleted element present: {elid}")
         by_id[elid] = el
+
+    for el in elements:
+        for key in ("containerId", "frameId"):
+            ref = el.get(key)
+            if ref is not None and ref not in by_id:
+                raise ValueError(f"element {el['id']} references missing {key} {ref}")
+        for key in ("startBinding", "endBinding"):
+            binding = el.get(key)
+            if isinstance(binding, dict):
+                ref = binding.get("elementId")
+                if ref not in by_id:
+                    raise ValueError(f"element {el['id']} references missing {key} element {ref}")
+        for bound in el.get("boundElements") or []:
+            if not isinstance(bound, dict):
+                raise ValueError(f"element {el['id']} has invalid boundElements entry")
+            ref = bound.get("id")
+            if ref not in by_id:
+                raise ValueError(f"element {el['id']} references missing bound element {ref}")
+            if bound.get("type") == "text" and by_id[ref].get("containerId") != el["id"]:
+                raise ValueError(f"container {el['id']} has non-reciprocal text binding {ref}")
 
     # Container/text binding invariants.
     for el in elements:
@@ -1636,7 +1939,7 @@ def _validate_scene(scene: dict[str, Any], *, grid: int) -> None:
 
     for el in elements:
         custom = el.get("customData")
-        if isinstance(custom, dict) and custom.get("seerSource") == "library":
+        if isinstance(custom, dict) and (custom.get("seerSource") == "library" or custom.get("seerLabel") == "omitted"):
             continue
         for key in ("x", "y"):
             if key in el and not _is_on_grid(el[key]):
@@ -1672,14 +1975,16 @@ def build_scene(
     g = builder.grid
     outer = g * 2
     hgap = g * 4
+    screen_pitch = builder.snap(screen_w + hgap)
+    actual_hgap = screen_pitch - screen_w
 
-    canvas_w = outer * 2 + (screen_w * len(screens)) + (hgap * max(0, len(screens) - 1))
+    canvas_w = outer * 2 + (screen_w * len(screens)) + (actual_hgap * max(0, len(screens) - 1))
     canvas_h = outer * 2 + screen_h
 
     elements: list[dict[str, Any]] = []
     show_label = False
     for idx, screen in enumerate(screens):
-        sx = builder.snap(outer + idx * (screen_w + hgap))
+        sx = outer + idx * screen_pitch
         sy = outer
         elements.extend(
             _layout_screen(
@@ -1701,13 +2006,10 @@ def build_scene(
         "version": 2,
         "source": "https://excalidraw.com",
         "elements": elements,
+        "scrollToContent": True,
         "appState": {
             "gridSize": preset.grid_size,
             "viewBackgroundColor": theme.background,
-            # Slightly zoom out when multiple screens are present to improve initial framing.
-            "zoom": {"value": 0.8 if len(screens) > 1 else 1},
-            "scrollX": 0,
-            "scrollY": 0,
         },
         "files": {},
     }
@@ -1762,7 +2064,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--seed", type=int, help="Deterministic seed for reproducible outputs.")
     parser.add_argument(
         "--library",
-        help="Path to a .excalidrawlib file. Defaults to the bundled basic UX library if present.",
+        help="Path to a .excalidrawlib file. Defaults to the bundled UI kit if present.",
     )
     parser.add_argument("--no-library", action="store_true", help="Disable Excalidraw library usage.")
     parser.add_argument("--no-strict", action="store_true", help="Disable invariant validation (not recommended).")
@@ -1808,9 +2110,15 @@ def main(argv: list[str]) -> int:
     slug = _slugify(args.name)
 
     out_path = args.out or os.path.join(_default_excalidraw_output_dir(out_root), f"nl-{slug}-{run_id}.excalidraw")
-    out_dir = os.path.dirname(out_path)
-    if out_dir:
+    out_dir = os.path.dirname(out_path) or "."
+    try:
         os.makedirs(out_dir, exist_ok=True)
+    except OSError as e:
+        print(f"error: cannot create output directory {out_dir}: {e}", file=sys.stderr)
+        return 2
+    if os.path.isdir(out_path):
+        print(f"error: output path is a directory: {out_path}", file=sys.stderr)
+        return 2
 
     theme = THEMES[args.theme]
     fidelity: Fidelity = args.fidelity  # type: ignore[assignment]
@@ -1831,12 +2139,20 @@ def main(argv: list[str]) -> int:
     prefer_library = False
     if not args.no_library:
         lib_path = Path(args.library) if args.library else _default_library_path()
+        if args.library and not lib_path.is_file():
+            print(f"error: library not found: {lib_path}", file=sys.stderr)
+            return 2
         if lib_path.exists():
             try:
                 library = load_excalidraw_library(lib_path)
+                if not library.items:
+                    raise ValueError("library contains no usable items")
                 prefer_library = True
             except Exception as e:
-                print(f"warning: failed to load library {lib_path}: {e}", file=sys.stderr)
+                level = "error" if args.library else "warning"
+                print(f"{level}: failed to load library {lib_path}: {e}", file=sys.stderr)
+                if args.library:
+                    return 2
 
     scene, meta2 = build_scene(
         text=text,
@@ -1849,19 +2165,17 @@ def main(argv: list[str]) -> int:
         library=library,
         prefer_library=prefer_library,
     )
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(scene, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-
-    latest_dir = os.path.join(out_root, "excalidraw")
-    os.makedirs(latest_dir, exist_ok=True)
+    latest_dir = out_dir if args.out else os.path.join(out_root, "excalidraw")
     latest_path = os.path.join(latest_dir, f"latest-{slug}.excalidraw")
     try:
-        with open(latest_path, "w", encoding="utf-8") as f:
-            json.dump(scene, f, indent=2, ensure_ascii=False)
-            f.write("\n")
-    except Exception:
-        pass
+        os.makedirs(latest_dir, exist_ok=True)
+        for path in (out_path, latest_path):
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(scene, f, indent=2, ensure_ascii=False)
+                f.write("\n")
+    except OSError as e:
+        print(f"error: failed to write output: {e}", file=sys.stderr)
+        return 1
 
     meta = {
         "name": slug,
