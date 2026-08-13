@@ -11,8 +11,8 @@ Use the unified CLI for visual evidence. Keep specialist scripts for recording, 
 ## Core workflow
 
 1. Run `python3 scripts/seer doctor --json`. Resolve missing permissions or dependencies before capture.
-2. Run `python3 scripts/seer windows --json` and select the exact process name.
-3. Run `python3 scripts/seer capture --process "AppName" --out .seer/capture/current.png --json`.
+2. Run `python3 scripts/seer windows --json` and select the exact window's `window_id`.
+3. Run `python3 scripts/seer capture --window-id 12345 --out .seer/capture/current.png --json`.
 4. Load the returned `artifacts.current` path with `view_image`. Inspect the fresh image before making claims.
 5. Run `python3 scripts/seer verify .seer/capture/current.png <baseline-name> --json`.
 6. Load the returned diff image when status is `fail`, then iterate and capture again.
@@ -24,7 +24,7 @@ Never create or replace a baseline without explicit user approval. A missing bas
 ```text
 python3 scripts/seer doctor --json
 python3 scripts/seer windows --json
-python3 scripts/seer capture [--process NAME] [--out PATH] --json
+python3 scripts/seer capture [--window-id ID|--process NAME] [--out PATH] --json
 python3 scripts/seer verify [--loop-dir DIR] [--resize] [--max-diff-percent N]
                             [--create-baseline|--update-baseline]
                             CURRENT BASELINE --json
@@ -32,7 +32,7 @@ python3 scripts/seer verify [--loop-dir DIR] [--resize] [--max-diff-percent N]
 
 Commands emit at most one JSON object to stdout and diagnostics to stderr. Exit 0 means pass, 1 means visual fail, 2 means tool/input error, and 3 means `needs_baseline`. The default allowed difference is 0%.
 
-`windows` indexes are informational and unstable. `capture` currently targets the selected process's first window; rerun it after window movement or state changes.
+`window_id` is the native, session-scoped identifier for one exact window. It survives movement and reordering, but becomes stale when the window closes or is recreated; rerun `windows` before retrying. The 1-based `index` remains informational. `capture --process` remains a compatibility fallback that targets the process's first window.
 
 Set `SEER_OUT_DIR` to change `.seer/` output or `SEER_LOOP_DIR` to change only baseline, latest, history, diff, and report storage.
 
@@ -51,7 +51,7 @@ Use `--help` on specialist scripts for their complete options. Pillow is require
 ## Resources
 
 - `scripts/seer`: machine-readable entry point; delegates capture and verification to existing scripts.
-- `scripts/capture_app_window.sh`: captures the first window of a process.
+- `scripts/capture_app_window.sh`: captures an exact window ID or the first window of a process.
 - `scripts/loop_compare.sh` and `scripts/compare_images.py`: manage approved baselines and exact pixel comparisons.
 - `scripts/record_app_window.sh`, `scripts/record_screen.sh`, `scripts/summarize_video.sh`: video evidence.
 - `scripts/mockup_ui.sh`, `scripts/annotate_image.py`: annotations.

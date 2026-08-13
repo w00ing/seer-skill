@@ -24,53 +24,79 @@ tell application "System Events"
 end tell
 """
 WINDOWS_JXA = r"""
+ObjC.import("CoreGraphics");
+
 function run() {
   const events = Application("System Events");
-  const result = [];
+  const processes = {};
   const seen = {};
   let visibleProcesses = 0;
   let accessibleProcesses = 0;
   let skippedProcesses = 0;
-  let skippedWindows = 0;
   let frontmostProcess = null;
-  for (const process of events.applicationProcesses()) {
+
+  for (const process of events.applicationProcesses.whose({visible: true})()) {
     try {
-      if (!process.visible()) continue;
       const pid = process.unixId();
       if (seen[pid]) continue;
       seen[pid] = true;
       visibleProcesses++;
       const processName = process.name();
       const frontmost = process.frontmost();
-      if (frontmost) frontmostProcess = processName;
-      const windows = process.windows();
+      process.windows();
+      processes[pid] = {name: processName, frontmost: frontmost, index: 0};
       accessibleProcesses++;
-      for (let index = 0; index < windows.length; index++) {
-        try {
-          const window = windows[index];
-          const position = window.position();
-          const size = window.size();
-          if (size[0] <= 0 || size[1] <= 0) continue;
-          result.push({
-            process: processName,
-            index: index + 1,
-            title: window.name() || "",
-            frontmost: frontmost,
-            bounds: {
-              x: position[0],
-              y: position[1],
-              width: size[0],
-              height: size[1]
-            }
-          });
-        } catch (_) {
-          skippedWindows++;
-        }
-      }
+      if (frontmost) frontmostProcess = processName;
     } catch (_) {
       skippedProcesses++;
     }
   }
+
+  const rawWindows = $.CGWindowListCopyWindowInfo(
+    $.kCGWindowListOptionOnScreenOnly | $.kCGWindowListExcludeDesktopElements,
+    0
+  );
+  if (!rawWindows) throw new Error("window server unavailable");
+
+  const windows = ObjC.deepUnwrap(ObjC.castRefToObject(rawWindows));
+  const result = [];
+  let skippedWindows = 0;
+
+  for (const window of windows) {
+    try {
+      if (Number(window.kCGWindowLayer) !== 0 || window.kCGWindowIsOnscreen === false ||
+          Number(window.kCGWindowAlpha) <= 0 || Number(window.kCGWindowSharingState) === 0) continue;
+      const windowId = Number(window.kCGWindowNumber);
+      const pid = Number(window.kCGWindowOwnerPID);
+      const process = processes[pid];
+      if (!process) continue;
+      const bounds = window.kCGWindowBounds || {};
+      const x = Number(bounds.X);
+      const y = Number(bounds.Y);
+      const width = Number(bounds.Width);
+      const height = Number(bounds.Height);
+      if (!Number.isInteger(windowId) || windowId <= 0 ||
+          !Number.isInteger(pid) || pid <= 0 ||
+          !Number.isFinite(x) || !Number.isFinite(y) ||
+          !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+        skippedWindows++;
+        continue;
+      }
+
+      process.index++;
+      result.push({
+        window_id: windowId,
+        process: process.name,
+        index: process.index,
+        title: typeof window.kCGWindowName === "string" ? window.kCGWindowName : "",
+        frontmost: process.frontmost,
+        bounds: {x: x, y: y, width: width, height: height}
+      });
+    } catch (_) {
+      skippedWindows++;
+    }
+  }
+
   return JSON.stringify({
     windows: result,
     visible_processes: visibleProcesses,
@@ -101,6 +127,16 @@ def fail(message: str) -> int:
     return 2
 
 
+def parse_window_id(value: str) -> int:
+    try:
+        window_id = int(value, 10)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("window ID must be an integer") from exc
+    if not 1 <= window_id <= 0xFFFFFFFF:
+        raise argparse.ArgumentTypeError("window ID must be between 1 and 4294967295")
+    return window_id
+
+
 def window_snapshot(osascript: str):
     result = run([osascript, "-l", "JavaScript", "-e", WINDOWS_JXA])
     if result.returncode != 0:
@@ -116,6 +152,10 @@ def window_snapshot(osascript: str):
             "skipped_windows",
         ):
             if not isinstance(snapshot.get(key), int):
+                raise ValueError
+        for window in snapshot["windows"]:
+            window_id = window.get("window_id") if isinstance(window, dict) else None
+            if isinstance(window_id, bool) or not isinstance(window_id, int) or not 1 <= window_id <= 0xFFFFFFFF:
                 raise ValueError
     except (json.JSONDecodeError, ValueError):
         return None, result
@@ -195,7 +235,10 @@ def windows(_: argparse.Namespace) -> int:
 
 
 def capture(args: argparse.Namespace) -> int:
-    command = ["bash", str(SCRIPTS / "capture_app_window.sh"), "--"]
+    command = ["bash", str(SCRIPTS / "capture_app_window.sh")]
+    if args.window_id is not None:
+        command.extend(["--window-id", str(args.window_id)])
+    command.append("--")
     if args.out or args.process:
         command.append(args.out or "")
     if args.process:
@@ -218,6 +261,7 @@ def capture(args: argparse.Namespace) -> int:
             "operation": "capture",
             "status": "pass",
             "process": args.process,
+            "window_id": args.window_id,
             "artifacts": {"current": str(current)},
         }
     )
@@ -267,8 +311,10 @@ def parser() -> argparse.ArgumentParser:
     windows_parser.add_argument("--json", action="store_true", help="Emit JSON (default)")
     windows_parser.set_defaults(handler=windows)
 
-    capture_parser = commands.add_parser("capture", help="Capture an app's first visible window")
-    capture_parser.add_argument("--process", help="Exact app process name (default: frontmost)")
+    capture_parser = commands.add_parser("capture", help="Capture an exact window or an app's first window")
+    capture_target = capture_parser.add_mutually_exclusive_group()
+    capture_target.add_argument("--window-id", type=parse_window_id, help="CGWindowID returned by windows")
+    capture_target.add_argument("--process", help="Exact app process name (default: frontmost)")
     capture_parser.add_argument("--out", help="Output PNG path")
     capture_parser.add_argument("--json", action="store_true", help="Emit JSON (default)")
     capture_parser.set_defaults(handler=capture)

@@ -67,7 +67,8 @@ SEER=skills/seer/scripts/seer
 
 "$SEER" doctor --json
 "$SEER" windows --json
-"$SEER" capture --process "Preview" --out .seer/capture/current.png --json
+# Select a returned window_id; it identifies one exact window, even when the app has several.
+"$SEER" capture --window-id 12345 --out .seer/capture/current.png --json
 
 # No baseline is silently approved. This returns needs_baseline (exit 3).
 "$SEER" verify .seer/capture/current.png settings --json
@@ -76,7 +77,7 @@ SEER=skills/seer/scripts/seer
 "$SEER" verify .seer/capture/current.png settings --create-baseline --json
 
 # After a UI change, allow at most 0.5% changed pixels.
-"$SEER" capture --process "Preview" --out .seer/capture/current.png --json
+"$SEER" capture --window-id 12345 --out .seer/capture/current.png --json
 "$SEER" verify .seer/capture/current.png settings --max-diff-percent 0.5 --json
 ```
 
@@ -103,12 +104,12 @@ The default threshold is 0%. A failed `doctor` still emits its capability report
 |---|---|
 | Check required capabilities | `skills/seer/scripts/seer doctor --json` |
 | List visible app windows | `skills/seer/scripts/seer windows --json` |
-| Capture a visible app window | `skills/seer/scripts/seer capture --process <name> --json` |
+| Capture an exact visible window | `skills/seer/scripts/seer capture --window-id <id> --json` |
 | Verify against a named baseline | `skills/seer/scripts/seer verify <current.png> <name> --json` |
 | Record a short app flow | `bash skills/seer/scripts/record_app_window.sh --duration 3` |
 | Summarize a recording | `bash skills/seer/scripts/summarize_video.sh <video.mov> --sheet --gif` |
 
-Use `--help` on the CLI or a subcommand for complete options. `windows` reports a 1-based index, but capture currently targets the selected process's first window; stable window IDs are not yet supported. Pillow is required for image comparison and annotation; ffmpeg and ffprobe are optional unless you use video workflows.
+Use `--help` on the CLI or a subcommand for complete options. `windows` returns a session-scoped native `window_id`; it survives window movement and reordering, but becomes stale when the window closes or is recreated. The 1-based `index` remains informational. `capture --process` remains a compatibility fallback that captures the process's first window. Pillow is required for image comparison and annotation; ffmpeg and ffprobe are optional unless you use video workflows.
 
 ## Advanced workflows
 
@@ -149,7 +150,7 @@ Set `SEER_OUT_DIR` to change the output root or `SEER_LOOP_DIR` to change only v
 
 - `error: window not found`: start the app, check its process name, and ensure it has a visible window.
 - Empty or black capture: grant Screen Recording permission to the terminal running the agent.
-- Wrong window: use `windows --json`, then pass the exact process name to `capture`.
+- Wrong or stale window: rerun `windows --json`, then pass the returned `window_id` to `capture`.
 - Typing fails: grant Accessibility and Automation → System Events permissions.
 - Diff command reports missing Pillow: install it in the `python3` environment used by Seer.
 

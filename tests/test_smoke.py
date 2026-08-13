@@ -55,13 +55,15 @@ class SmokeTests(unittest.TestCase):
             bin_dir.mkdir()
             source = work / "source.png"
             current = work / "current.png"
+            exact = work / "exact.png"
+            capture_log = work / "capture.log"
             loop_dir = work / "loop"
             Image.new("RGB", (4, 4), "white").save(source)
             self.write_executable(
                 bin_dir / "osascript",
                 "#!/usr/bin/env bash\n"
                 "case \"$*\" in\n"
-                "  *JavaScript*) printf '%s\\n' '{\"windows\":[{\"process\":\"FakeApp\",\"index\":1,\"title\":\"A \\\"quoted\\\" window\",\"frontmost\":true,\"bounds\":{\"x\":1,\"y\":2,\"width\":4,\"height\":4}}],\"visible_processes\":1,\"accessible_processes\":1,\"skipped_processes\":0,\"skipped_windows\":0,\"frontmost_process\":\"FakeApp\"}' ;;\n"
+                "  *JavaScript*) printf '%s\\n' '{\"windows\":[{\"window_id\":101,\"process\":\"FakeApp\",\"index\":1,\"title\":\"A \\\"quoted\\\" window\",\"frontmost\":true,\"bounds\":{\"x\":1,\"y\":2,\"width\":4,\"height\":4}},{\"window_id\":202,\"process\":\"FakeApp\",\"index\":2,\"title\":\"Second window\",\"frontmost\":true,\"bounds\":{\"x\":9,\"y\":8,\"width\":4,\"height\":4}}],\"visible_processes\":1,\"accessible_processes\":1,\"skipped_processes\":0,\"skipped_windows\":0,\"frontmost_process\":\"FakeApp\"}' ;;\n"
                 "  *visible*) echo FakeApp ;;\n"
                 "  *frontmost*) echo FakeApp ;;\n"
                 "  *) script=$(cat); case \"$script\" in *position*) echo '1, 2' ;; *size*) echo '4, 4' ;; esac ;;\n"
@@ -70,6 +72,7 @@ class SmokeTests(unittest.TestCase):
             self.write_executable(
                 bin_dir / "screencapture",
                 "#!/usr/bin/env bash\n"
+                "printf '%s\\n' \"$*\" >> \"$SEER_TEST_CAPTURE_LOG\"\n"
                 "for arg in \"$@\"; do output=$arg; done\n"
                 "mkdir -p \"$(dirname \"$output\")\"\n"
                 "cp \"$SEER_TEST_IMAGE\" \"$output\"\n",
@@ -79,6 +82,7 @@ class SmokeTests(unittest.TestCase):
                 "SEER_OUT_DIR": str(work / "out"),
                 "SEER_LOOP_DIR": str(loop_dir),
                 "SEER_TEST_IMAGE": str(source),
+                "SEER_TEST_CAPTURE_LOG": str(capture_log),
             }
 
             doctor = self.run_cli("doctor", "--json", cwd=work, env=env)
@@ -90,6 +94,9 @@ class SmokeTests(unittest.TestCase):
             windows_payload = json.loads(windows.stdout)
             self.assertEqual(windows.returncode, 0, windows.stderr)
             self.assertEqual(windows_payload["windows"][0]["title"], 'A "quoted" window')
+            self.assertEqual(
+                [window["window_id"] for window in windows_payload["windows"]], [101, 202]
+            )
 
             captured = self.run_cli(
                 "capture",
@@ -105,6 +112,27 @@ class SmokeTests(unittest.TestCase):
             self.assertEqual(captured.returncode, 0, captured.stderr)
             self.assertEqual(Path(captured_payload["artifacts"]["current"]), current.resolve())
             self.assertTrue(current.is_file())
+            self.assertIn("-R 1,2,4,4", capture_log.read_text(encoding="utf-8"))
+
+            captured_exact = self.run_cli(
+                "capture",
+                "--window-id",
+                "202",
+                "--out",
+                str(exact),
+                "--json",
+                cwd=work,
+                env=env,
+            )
+            exact_payload = json.loads(captured_exact.stdout)
+            self.assertEqual(captured_exact.returncode, 0, captured_exact.stderr)
+            self.assertEqual(exact_payload["window_id"], 202)
+            self.assertIsNone(exact_payload["process"])
+            self.assertEqual(Path(exact_payload["artifacts"]["current"]), exact.resolve())
+            exact_args = capture_log.read_text(encoding="utf-8").splitlines()[-1]
+            self.assertIn("-a", exact_args)
+            self.assertIn("-l202", exact_args)
+            self.assertNotIn("-R", exact_args)
 
             missing = self.run_cli("verify", str(current), "home", "--json", cwd=work, env=env)
             self.assertEqual(missing.returncode, 3, missing.stderr)
@@ -142,6 +170,69 @@ class SmokeTests(unittest.TestCase):
             self.assertEqual(invalid.returncode, 2)
             self.assertEqual(invalid.stdout, "")
             self.assertIn("finite number", invalid.stderr)
+
+    def test_window_id_capture_rejects_invalid_and_stale_ids(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            bin_dir = work / "bin"
+            bin_dir.mkdir()
+            current = work / "current.png"
+            self.write_executable(bin_dir / "osascript", "#!/usr/bin/env bash\nexit 99\n")
+            self.write_executable(
+                bin_dir / "screencapture",
+                "#!/usr/bin/env bash\n"
+                "echo 'could not create image from window' >&2\n"
+                "exit 1\n",
+            )
+            env = os.environ | {"PATH": f"{bin_dir}:{os.environ['PATH']}"}
+
+            for window_id in ("0", "not-a-number", "4294967296"):
+                with self.subTest(window_id=window_id):
+                    result = self.run_cli(
+                        "capture",
+                        "--window-id",
+                        window_id,
+                        "--out",
+                        str(current),
+                        cwd=work,
+                        env=env,
+                    )
+                    self.assertEqual(result.returncode, 2)
+                    self.assertEqual(result.stdout, "")
+                    self.assertFalse(current.exists())
+
+            conflicting = self.run_cli(
+                "capture",
+                "--window-id",
+                "123",
+                "--process",
+                "FakeApp",
+                cwd=work,
+                env=env,
+            )
+            self.assertEqual(conflicting.returncode, 2)
+            self.assertEqual(conflicting.stdout, "")
+
+            stale = self.run_cli(
+                "capture",
+                "--window-id",
+                "123",
+                "--out",
+                str(current),
+                cwd=work,
+                env=env,
+            )
+            self.assertEqual(stale.returncode, 2)
+            self.assertEqual(stale.stdout, "")
+            self.assertIn("window ID 123 is unavailable", stale.stderr)
+            self.assertFalse(current.exists())
+
+            for window_id in ("0", "99999999999999999999"):
+                direct_invalid = self.run_shell(
+                    "capture_app_window.sh", "--window-id", window_id, cwd=work, env=env
+                )
+                self.assertEqual(direct_invalid.returncode, 2)
+                self.assertEqual(direct_invalid.stdout, "")
 
     def test_compare_detects_alpha_and_writes_basename_outputs(self):
         with tempfile.TemporaryDirectory() as tmp:
