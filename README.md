@@ -2,7 +2,7 @@
 
 **Visual verification for coding agents on macOS.**
 
-Seer gives Codex and Claude Code one machine-readable CLI for a repeatable native-UI feedback loop: check capabilities, find a window, capture it, inspect the visible result, and compare it with an explicitly approved baseline. Screenshots, diffs, recordings, and reports stay local under `.seer/`.
+Seer gives Codex and Claude Code one machine-readable CLI for a repeatable native-UI feedback loop: check capabilities, find a window, capture it, inspect the visible result, wait for a stable frame when needed, and compare it with an explicitly approved baseline. Screenshots, diffs, recordings, and reports stay local under `.seer/`.
 
 Seer is an evidence layer, not another desktop automation framework. Your agent changes the code; Seer verifies what actually appeared on screen.
 
@@ -79,18 +79,32 @@ SEER=skills/seer/scripts/seer
 # After a UI change, allow at most 0.5% changed pixels.
 "$SEER" capture --window-id 12345 --out .seer/capture/current.png --json
 "$SEER" verify .seer/capture/current.png settings --max-diff-percent 0.5 --json
+
+# Ignore an explicitly dynamic region, measured in baseline PNG pixels.
+"$SEER" verify .seer/capture/current.png settings \
+  --ignore-rect 0,0,240,64 --max-diff-percent 0.5 --json
+
+# Wait for the exact window to remain visually stable before publishing a capture.
+"$SEER" wait --stable --window-id 12345 --timeout 10 --interval 0.25 \
+  --stable-for 1 --max-diff-percent 0 --out .seer/capture/stable.png --json
 ```
 
-Each CLI invocation emits one JSON result to stdout, including on operational errors; diagnostics go to stderr. `--help` prints ordinary help text. Capture paths are returned as `artifacts.current`. Verification writes the current image, diff, history, and report under `.seer/loop/`.
+Each CLI invocation emits one JSON result to stdout, including on operational errors; diagnostics go to stderr. `--help` prints ordinary help text. Capture paths are returned as `artifacts.current`. For a valid comparison or baseline creation, Seer writes history and a report under `.seer/loop/` and a reproducible bundle under `.seer/loop/runs/<unique>/`. The bundle snapshots the baseline image used for the comparison, current image, report, and manifest; a diff is present when pixel comparison succeeds. The manifest records relative paths, checksums, capture metadata, and comparison options. A dimension or scale mismatch still preserves the image snapshots and report, but has no diff. A missing baseline or invalid input that stops before comparison setup leaves the loop directory untouched. The snapshot preserves what was compared even when an explicitly approved baseline update occurs.
 
 | Status | Exit | Meaning |
 |---|---:|---|
-| `pass` | 0 | Changed pixels are within the allowed threshold. |
-| `fail` | 1 | The visual difference exceeds the threshold. |
+| `pass` | 0 | Changed pixels are within the threshold; for `wait`, the sampled frames met its pixel stability condition. |
+| `fail` | 1 | The visual difference exceeds the threshold, or a `wait` timed out (`reason: "timeout"`). |
 | `error` | 2 | A command, permission, dependency, or input failed. |
 | `needs_baseline` | 3 | No approved baseline exists; Seer did not create one. |
 
-The default threshold is 0%. Every operational error emits one JSON object on stdout and a human-readable diagnostic on stderr. Its common shape is `{"schema_version":1,"operation":"capture","status":"error","error":{"code":"subprocess_failed","message":"..."}}`; `operation` is the recognized subcommand or `null` when none could be identified. `doctor` errors also include the capability report and `frontmost_process`. The `--help` forms are the exception and print ordinary help text. Error codes are `invalid_arguments`, `platform_unsupported`, `dependency_missing`, `subprocess_failed`, `invalid_subprocess_output`, `accessibility_required`, `filesystem_error`, and `not_ready`.
+The default threshold is 0%. Every operational error emits one JSON object on stdout and a human-readable diagnostic on stderr. Its common shape is `{"schema_version":1,"operation":"capture","status":"error","error":{"code":"subprocess_failed","message":"..."}}`; `operation` is the recognized subcommand or `null` when none could be identified. `doctor` errors also include the capability report and `frontmost_process`. The `--help` forms are the exception and print ordinary help text. Error codes include `invalid_arguments`, `platform_unsupported`, `dependency_missing`, `subprocess_failed`, `invalid_subprocess_output`, `accessibility_required`, `filesystem_error`, `not_ready`, `image_size_mismatch`, `image_scale_mismatch`, `image_not_found`, and `invalid_image`.
+
+`verify` and `wait` accept repeated `--ignore-rect X,Y,WIDTH,HEIGHT` options. Rectangles are strictly validated, fully in-bounds, half-open regions measured in baseline PNG pixels. Overlap is excluded only once. Ignored pixels are removed from both the changed-pixel numerator and comparison denominator; malformed rectangles and a mask that excludes the whole image are errors. No mask is inferred automatically.
+
+PNG dimensions and known DPI differences are reported. Seer does not silently resize for comparison. Use `verify --resize` to explicitly normalize to the baseline pixel grid; the current image is resized when its pixel dimensions differ, and `scale_evidence` records the opt-in. With matching dimensions, a known DPI mismatch returns `image_scale_mismatch` unless this flag is set; a pixel-dimension mismatch without the flag returns `image_size_mismatch`. When scale is unknown, Seer does not claim a verified scale match. Captures include a hash-bound `.seer.json` sidecar with available capture time, window ID, image dimensions, and DPI metadata; its path is returned as `artifacts.metadata`. For files without valid matching metadata, unavailable values remain null.
+
+`wait --stable` samples the same exact `window_id` until frames meet the configured pixel-difference threshold for the stable interval. It compares each frame with the interval anchor and resets that interval after a change, so gradual pixel drift does not accumulate into a false stable result. At least two frames are compared. A successful result has `reason: "stable"`, a `condition` object (`stable_for`, `interval`, `timeout`, `max_diff_percent`, `ignore_rects`, and `reference: "interval_anchor"`), capture metadata under `capture` (`source: "seer.capture"`), and `artifacts.current` plus `artifacts.metadata`. Timeout returns `fail` with reason `timeout` (exit 1); capture or input errors return `error` (exit 2). The output is published only on success, so timeout preserves any existing `--out` file. A stable result establishes only the measured pixel condition, not semantic correctness of the UI.
 
 ## Demo
 
@@ -106,6 +120,7 @@ The default threshold is 0%. Every operational error emits one JSON object on st
 | List visible app windows | `skills/seer/scripts/seer windows --json` |
 | Capture an exact visible window | `skills/seer/scripts/seer capture --window-id <id> --json` |
 | Verify against a named baseline | `skills/seer/scripts/seer verify <current.png> <name> --json` |
+| Wait for an exact window to become visually stable | `skills/seer/scripts/seer wait --stable --window-id <id> --timeout 10 --interval 0.25 --stable-for 1 --json` |
 | Record a short app flow | `bash skills/seer/scripts/record_app_window.sh --duration 3` |
 | Summarize a recording | `bash skills/seer/scripts/summarize_video.sh <video.mov> --sheet --gif` |
 
@@ -145,7 +160,8 @@ See [Visual loop internals](docs/visual-loop.md) for the underlying image metric
     ├── latest/
     ├── history/
     ├── diffs/
-    └── reports/
+    ├── reports/
+    └── runs/         per-run evidence bundles
 ```
 
 Set `SEER_OUT_DIR` to change the output root or `SEER_LOOP_DIR` to change only visual-verification storage. Add `.seer/` to the target project's `.gitignore` unless you intentionally version its baselines.
@@ -158,9 +174,15 @@ Set `SEER_OUT_DIR` to change the output root or `SEER_LOOP_DIR` to change only v
 - Typing fails: grant Accessibility and Automation → System Events permissions.
 - Capture or diff reports missing Pillow: install it in the active `python3` environment used by Seer.
 
-## v0.5 validation
+## v0.6 validation
 
-The reproducible macOS validation checklist, recorded results, and remaining permission-test gaps are in [v0.5 validation](docs/v0.5-validation.md). CI uses command stubs for deterministic behavior; native window behavior is exercised separately with an opt-in AppKit fixture.
+The v0.6.0 GitHub release and tag are pending publication; see the local [v0.6.0 release notes](docs/releases/v0.6.0.md). The v0.6 validation checklist and current evidence status are in [v0.6 validation](docs/v0.6-validation.md). The [v0.5 validation record](docs/v0.5-validation.md) remains available as historical evidence. CI uses command stubs for deterministic behavior; native window behavior is exercised separately with an opt-in AppKit fixture.
+
+## Roadmap
+
+- v0.7: Accessibility-based UI assertions and optional OCR.
+- v0.8: a thin local MCP adapter and evaluated agent workflows.
+- v0.9: installation, compatibility, and release hardening based on actual use.
 
 ## Development
 
