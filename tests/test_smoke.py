@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Optional
 
 from PIL import Image
 
@@ -48,6 +49,21 @@ class SmokeTests(unittest.TestCase):
             text=True,
         )
 
+    def assert_cli_error(
+        self,
+        result: subprocess.CompletedProcess[str],
+        operation: Optional[str],
+        code: str,
+    ):
+        self.assertEqual(result.returncode, 2, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["schema_version"], 1)
+        self.assertEqual(payload["operation"], operation)
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["error"]["code"], code)
+        self.assertTrue(payload["error"]["message"])
+        self.assertIn("error:", result.stderr)
+
     def test_cli_machine_contract(self):
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp)
@@ -64,7 +80,7 @@ class SmokeTests(unittest.TestCase):
                 "#!/usr/bin/env bash\n"
                 "case \"$*\" in\n"
                 "  *JavaScript*) printf '%s\\n' '{\"windows\":[{\"window_id\":101,\"process\":\"FakeApp\",\"index\":1,\"title\":\"A \\\"quoted\\\" window\",\"frontmost\":true,\"bounds\":{\"x\":1,\"y\":2,\"width\":4,\"height\":4}},{\"window_id\":202,\"process\":\"FakeApp\",\"index\":2,\"title\":\"Second window\",\"frontmost\":true,\"bounds\":{\"x\":9,\"y\":8,\"width\":4,\"height\":4}}],\"visible_processes\":1,\"accessible_processes\":1,\"skipped_processes\":0,\"skipped_windows\":0,\"frontmost_process\":\"FakeApp\"}' ;;\n"
-                "  *visible*) echo FakeApp ;;\n"
+                "  *visible*) echo true ;;\n"
                 "  *frontmost*) echo FakeApp ;;\n"
                 "  *) script=$(cat); case \"$script\" in *position*) echo '1, 2' ;; *size*) echo '4, 4' ;; esac ;;\n"
                 "esac\n",
@@ -87,7 +103,9 @@ class SmokeTests(unittest.TestCase):
 
             doctor = self.run_cli("doctor", "--json", cwd=work, env=env)
             self.assertEqual(doctor.returncode, 0, doctor.stderr)
-            self.assertEqual(json.loads(doctor.stdout)["status"], "pass")
+            doctor_payload = json.loads(doctor.stdout)
+            self.assertEqual(doctor_payload["status"], "pass")
+            self.assertEqual(doctor_payload["frontmost_process"], "FakeApp")
             self.assertEqual(doctor.stderr, "")
 
             windows = self.run_cli("windows", "--json", cwd=work, env=env)
@@ -168,7 +186,10 @@ class SmokeTests(unittest.TestCase):
                 env=env,
             )
             self.assertEqual(invalid.returncode, 2)
-            self.assertEqual(invalid.stdout, "")
+            invalid_payload = json.loads(invalid.stdout)
+            self.assertEqual(invalid_payload["status"], "error")
+            self.assertEqual(invalid_payload["operation"], "verify")
+            self.assertEqual(invalid_payload["error"]["code"], "invalid_arguments")
             self.assertIn("finite number", invalid.stderr)
 
     def test_window_id_capture_rejects_invalid_and_stale_ids(self):
@@ -197,8 +218,7 @@ class SmokeTests(unittest.TestCase):
                         cwd=work,
                         env=env,
                     )
-                    self.assertEqual(result.returncode, 2)
-                    self.assertEqual(result.stdout, "")
+                    self.assert_cli_error(result, "capture", "invalid_arguments")
                     self.assertFalse(current.exists())
 
             conflicting = self.run_cli(
@@ -210,8 +230,7 @@ class SmokeTests(unittest.TestCase):
                 cwd=work,
                 env=env,
             )
-            self.assertEqual(conflicting.returncode, 2)
-            self.assertEqual(conflicting.stdout, "")
+            self.assert_cli_error(conflicting, "capture", "invalid_arguments")
 
             stale = self.run_cli(
                 "capture",
@@ -222,8 +241,7 @@ class SmokeTests(unittest.TestCase):
                 cwd=work,
                 env=env,
             )
-            self.assertEqual(stale.returncode, 2)
-            self.assertEqual(stale.stdout, "")
+            self.assert_cli_error(stale, "capture", "subprocess_failed")
             self.assertIn("window ID 123 is unavailable", stale.stderr)
             self.assertFalse(current.exists())
 
@@ -233,6 +251,128 @@ class SmokeTests(unittest.TestCase):
                 )
                 self.assertEqual(direct_invalid.returncode, 2)
                 self.assertEqual(direct_invalid.stdout, "")
+
+    def test_cli_usage_and_subprocess_errors_have_one_json_object(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            bin_dir = work / "bin"
+            bin_dir.mkdir()
+            self.write_executable(bin_dir / "bash", "#!/bin/sh\nexit 0\n")
+            env = os.environ | {"PATH": f"{bin_dir}:{os.environ['PATH']}"}
+
+            missing_command = self.run_cli(cwd=work, env=env)
+            self.assert_cli_error(missing_command, None, "invalid_arguments")
+
+            missing_verify_arguments = self.run_cli("verify", "current.png", cwd=work, env=env)
+            self.assert_cli_error(missing_verify_arguments, "verify", "invalid_arguments")
+
+            invalid_capture_output = self.run_cli("capture", "--json", cwd=work, env=env)
+            self.assert_cli_error(invalid_capture_output, "capture", "invalid_subprocess_output")
+
+            self.write_executable(
+                bin_dir / "bash",
+                "#!/bin/sh\n"
+                "echo 'error: required command not found: screencapture' >&2\n"
+                "exit 2\n",
+            )
+            missing_dependency = self.run_cli("capture", "--json", cwd=work, env=env)
+            self.assert_cli_error(missing_dependency, "capture", "dependency_missing")
+
+            self.write_executable(
+                bin_dir / "bash",
+                "#!/bin/sh\n"
+                "echo 'error: current image not found: missing.png' >&2\n"
+                "exit 2\n",
+            )
+            missing_image = self.run_cli("verify", "missing.png", "home", cwd=work, env=env)
+            self.assert_cli_error(missing_image, "verify", "filesystem_error")
+
+            help_result = self.run_cli("--help", cwd=work, env=env)
+            self.assertEqual(help_result.returncode, 0)
+            self.assertIn("usage:", help_result.stdout.lower())
+            self.assertEqual(help_result.stderr, "")
+
+    def test_doctor_keeps_accessibility_and_frontmost_probes_separate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            bin_dir = work / "bin"
+            bin_dir.mkdir()
+            self.write_executable(
+                bin_dir / "osascript",
+                "#!/bin/sh\n"
+                "case \"$*\" in\n"
+                "  *visible*) echo true ;;\n"
+                "  *frontmost*) exit 1 ;;\n"
+                "  *) exit 1 ;;\n"
+                "esac\n",
+            )
+            self.write_executable(bin_dir / "screencapture", "#!/bin/sh\nexit 0\n")
+            env = os.environ | {"PATH": f"{bin_dir}:{os.environ['PATH']}"}
+
+            doctor = self.run_cli("doctor", "--json", cwd=work, env=env)
+
+            self.assertEqual(doctor.returncode, 0, doctor.stderr)
+            payload = json.loads(doctor.stdout)
+            self.assertTrue(payload["capabilities"]["window_query"]["authorized"])
+            self.assertIsNone(payload["frontmost_process"])
+
+    def test_window_discovery_errors_have_structured_results(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            bin_dir = work / "bin"
+            bin_dir.mkdir()
+            env = os.environ | {"PATH": f"{bin_dir}:{os.environ['PATH']}"}
+            denied = json.dumps({"windows": [], "visible_processes": 1,
+                                 "accessible_processes": 0, "skipped_processes": 1,
+                                 "skipped_windows": 0, "frontmost_process": None})
+            for body, code in (
+                ("exit 1", "subprocess_failed"),
+                ("echo invalid-json", "invalid_subprocess_output"),
+                ("echo '{}'", "invalid_subprocess_output"),
+                (f"echo '{denied}'", "accessibility_required"),
+            ):
+                with self.subTest(code=code, body=body):
+                    self.write_executable(bin_dir / "osascript", "#!/bin/sh\n" + body + "\n")
+                    self.assert_cli_error(self.run_cli("windows", cwd=work, env=env), "windows", code)
+
+    def test_verification_rejects_invalid_or_inconsistent_child_results(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            bin_dir = work / "bin"
+            bin_dir.mkdir()
+            env = os.environ | {"PATH": f"{bin_dir}:{os.environ['PATH']}"}
+            for body in ("echo invalid-json", "echo '{}'", "echo '{\"status\":\"fail\"}'"):
+                with self.subTest(body=body):
+                    self.write_executable(bin_dir / "bash", "#!/bin/sh\n" + body + "\n")
+                    self.assert_cli_error(
+                        self.run_cli("verify", "unused.png", "home", cwd=work, env=env),
+                        "verify", "invalid_subprocess_output",
+                    )
+
+    def test_doctor_error_keeps_capability_report_and_error_shape(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            bin_dir = work / "bin"
+            bin_dir.mkdir()
+            self.write_executable(
+                bin_dir / "osascript",
+                "#!/bin/sh\n"
+                "case \"$*\" in *visible*) exit 1 ;; *frontmost*) echo FrontApp ;; esac\n",
+            )
+            self.write_executable(bin_dir / "screencapture", "#!/bin/sh\nexit 0\n")
+            env = os.environ | {"PATH": f"{bin_dir}:{os.environ['PATH']}"}
+
+            doctor = self.run_cli("doctor", "--json", cwd=work, env=env)
+
+            if sys.platform != "darwin":
+                self.skipTest("doctor capability readiness requires macOS")
+            self.assertEqual(doctor.returncode, 2)
+            payload = json.loads(doctor.stdout)
+            self.assertEqual(payload["operation"], "doctor")
+            self.assertEqual(payload["status"], "error")
+            self.assertEqual(payload["error"]["code"], "not_ready")
+            self.assertIn("capabilities", payload)
+            self.assertEqual(payload["frontmost_process"], "FrontApp")
 
     def test_compare_detects_alpha_and_writes_basename_outputs(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -16,13 +17,14 @@ tell application "System Events"
       if (count of windows of targetProcess) > 0 then
         set ignoredPosition to position of window 1 of targetProcess
         set ignoredSize to size of window 1 of targetProcess
-        return name of targetProcess
+        return "true"
       end if
     end try
   end repeat
-  error "no accessible visible window"
+  return "false"
 end tell
 """
+FRONTMOST_APPLESCRIPT = "tell application \"System Events\" to get name of first application process whose frontmost is true"
 WINDOWS_JXA = r"""
 ObjC.import("CoreGraphics");
 
@@ -113,8 +115,36 @@ def emit(payload: dict) -> None:
     print(json.dumps(payload, separators=(",", ":")))
 
 
+class SeerCLIError(Exception):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+class CLIUsageError(Exception):
+    def __init__(self, parser: argparse.ArgumentParser, message: str):
+        super().__init__(message)
+        self.parser = parser
+        self.message = message
+
+
+class SeerArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        raise CLIUsageError(self, message)
+
+
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(command, capture_output=True, text=True)
+    try:
+        return subprocess.run(command, capture_output=True, text=True)
+    except FileNotFoundError as exc:
+        raise SeerCLIError("dependency_missing", f"required command not found: {command[0]}") from exc
+    except PermissionError as exc:
+        raise SeerCLIError("subprocess_failed", f"could not execute {command[0]}: {exc.strerror}") from exc
+    except UnicodeError as exc:
+        raise SeerCLIError("invalid_subprocess_output", f"command returned invalid text: {command[0]}") from exc
+    except OSError as exc:
+        raise SeerCLIError("subprocess_failed", f"could not run {command[0]}: {exc.strerror or exc}") from exc
 
 
 def forward_stderr(result: subprocess.CompletedProcess[str]) -> None:
@@ -122,9 +152,65 @@ def forward_stderr(result: subprocess.CompletedProcess[str]) -> None:
         sys.stderr.write(result.stderr)
 
 
-def fail(message: str) -> int:
+def emit_error(operation: Optional[str], code: str, message: str, *, extra: Optional[dict] = None) -> int:
+    payload = {
+        "schema_version": 1,
+        "operation": operation,
+        "status": "error",
+        "error": {"code": code, "message": message},
+    }
+    if extra:
+        payload.update(extra)
+    emit(payload)
     print(f"error: {message}", file=sys.stderr)
     return 2
+
+
+def child_error_code(stderr: str, default: str = "subprocess_failed") -> str:
+    diagnostic = stderr.lower()
+    if any(
+        phrase in diagnostic
+        for phrase in (
+            "required command not found",
+            "command not found",
+            "no module named 'pil'",
+            "no module named \"pil\"",
+            "pillow is required",
+        )
+    ):
+        return "dependency_missing"
+    if any(
+        phrase in diagnostic
+        for phrase in (
+            "must be a finite number",
+            "cannot be used together",
+            "unknown option:",
+            "requires a value",
+            "requires an id",
+            "window id must be",
+        )
+    ):
+        return "invalid_arguments"
+    if any(
+        phrase in diagnostic
+        for phrase in (
+            "read-only file system",
+            "no space left",
+            "not a directory",
+            "current image not found",
+            "no such file or directory",
+        )
+    ):
+        return "filesystem_error"
+    return default
+
+
+def child_error_message(stderr: str, fallback: str) -> str:
+    for line in stderr.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("error:"):
+            return stripped[len("error:"):].strip()
+    return fallback
 
 
 def parse_window_id(value: str) -> int:
@@ -157,7 +243,7 @@ def window_snapshot(osascript: str):
             window_id = window.get("window_id") if isinstance(window, dict) else None
             if isinstance(window_id, bool) or not isinstance(window_id, int) or not 1 <= window_id <= 0xFFFFFFFF:
                 raise ValueError
-    except (json.JSONDecodeError, ValueError):
+    except (json.JSONDecodeError, TypeError, ValueError):
         return None, result
     return snapshot, result
 
@@ -167,58 +253,92 @@ def doctor(_: argparse.Namespace) -> int:
     osascript = shutil.which("osascript")
     screencapture = shutil.which("screencapture")
     pillow = importlib.util.find_spec("PIL") is not None
+    accessibility = False
     frontmost = None
 
     if platform_ok and osascript:
-        result = run([osascript, "-e", ACCESSIBILITY_APPLESCRIPT])
-        if result.returncode == 0 and result.stdout.strip():
-            frontmost = result.stdout.strip()
+        try:
+            access_result = run([osascript, "-e", ACCESSIBILITY_APPLESCRIPT])
+            accessibility = (
+                access_result.returncode == 0
+                and access_result.stdout.strip().lower() == "true"
+            )
+        except SeerCLIError:
+            accessibility = False
 
-    accessibility = frontmost is not None
+        try:
+            frontmost_result = run([osascript, "-e", FRONTMOST_APPLESCRIPT])
+            if frontmost_result.returncode == 0 and frontmost_result.stdout.strip():
+                frontmost = frontmost_result.stdout.strip()
+        except SeerCLIError:
+            frontmost = None
 
     ready = platform_ok and bool(osascript) and bool(screencapture) and pillow and accessibility
-    payload = {
-        "schema_version": 1,
-        "operation": "doctor",
-        "status": "pass" if ready else "error",
-        "capabilities": {
-            "platform": {"available": platform_ok, "value": sys.platform},
-            "window_query": {
-                "available": bool(osascript),
-                "authorized": accessibility,
-            },
-            "screen_capture": {
-                "available": bool(screencapture),
-                "permission": "checked_on_capture",
-            },
-            "image_diff": {"available": pillow},
-            "video": {
-                "available": bool(shutil.which("ffmpeg") and shutil.which("ffprobe")),
-                "required": False,
-            },
+    capabilities = {
+        "platform": {"available": platform_ok, "value": sys.platform},
+        "window_query": {
+            "available": bool(osascript),
+            "authorized": accessibility,
         },
-        "frontmost_process": frontmost,
+        "screen_capture": {
+            "available": bool(screencapture),
+            "permission": "checked_on_capture",
+        },
+        "image_diff": {"available": pillow},
+        "video": {
+            "available": bool(shutil.which("ffmpeg") and shutil.which("ffprobe")),
+            "required": False,
+        },
     }
-    emit(payload)
     if not ready:
-        print("error: Seer is not ready; inspect the doctor capability report", file=sys.stderr)
-        return 2
+        if not platform_ok:
+            code = "platform_unsupported"
+            message = "Seer requires macOS"
+        elif not osascript or not screencapture or not pillow:
+            code = "dependency_missing"
+            message = "Seer is missing a required dependency; inspect the doctor capability report"
+        else:
+            code = "not_ready"
+            message = "Could not confirm access to a visible window; inspect permissions and open a window"
+        return emit_error(
+            "doctor",
+            code,
+            message,
+            extra={"capabilities": capabilities, "frontmost_process": frontmost},
+        )
+    emit(
+        {
+            "schema_version": 1,
+            "operation": "doctor",
+            "status": "pass",
+            "capabilities": capabilities,
+            "frontmost_process": frontmost,
+        }
+    )
     return 0
 
 
 def windows(_: argparse.Namespace) -> int:
     if sys.platform != "darwin":
-        return fail("window discovery requires macOS")
+        return emit_error("windows", "platform_unsupported", "window discovery requires macOS")
     osascript = shutil.which("osascript")
     if not osascript:
-        return fail("osascript not found")
+        return emit_error("windows", "dependency_missing", "osascript not found")
 
     snapshot, result = window_snapshot(osascript)
     if snapshot is None:
         forward_stderr(result)
-        return fail("window discovery returned invalid data")
+        if result.returncode != 0:
+            code = child_error_code(result.stderr)
+            message = child_error_message(result.stderr, f"window discovery failed with exit {result.returncode}")
+        else:
+            code = "invalid_subprocess_output"
+            message = "window discovery returned invalid data"
+        return emit_error("windows", code, message)
     if snapshot["visible_processes"] and not snapshot["accessible_processes"]:
-        return fail("window discovery requires Accessibility permission")
+        return emit_error(
+            "windows", "accessibility_required", "window discovery requires Accessibility permission"
+        )
 
     emit(
         {
@@ -247,13 +367,19 @@ def capture(args: argparse.Namespace) -> int:
     result = run(command)
     forward_stderr(result)
     if result.returncode != 0:
-        return 2
+        code = child_error_code(result.stderr)
+        message = child_error_message(result.stderr, f"capture failed with exit {result.returncode}")
+        return emit_error("capture", code, message)
     output = result.stdout.strip()
     if not output:
-        return fail("capture did not return an image path")
-    current = Path(output).expanduser().resolve()
-    if not current.is_file():
-        return fail(f"capture did not create an image: {current}")
+        return emit_error("capture", "invalid_subprocess_output", "capture did not return an image path")
+    try:
+        current = Path(output).expanduser().resolve()
+        exists = current.is_file()
+    except (OSError, RuntimeError) as exc:
+        return emit_error("capture", "filesystem_error", f"could not inspect capture output: {exc}")
+    if not exists:
+        return emit_error("capture", "invalid_subprocess_output", f"capture did not create an image: {current}")
 
     emit(
         {
@@ -285,23 +411,35 @@ def verify(args: argparse.Namespace) -> int:
     result = run(command)
     forward_stderr(result)
     if result.returncode == 2:
-        return 2
+        code = child_error_code(result.stderr)
+        message = child_error_message(result.stderr, "verification command failed")
+        return emit_error("verify", code, message)
     if result.returncode not in (0, 1, 3):
-        return fail(f"verification failed with unexpected exit {result.returncode}")
+        code = child_error_code(result.stderr)
+        message = child_error_message(result.stderr, f"verification failed with unexpected exit {result.returncode}")
+        return emit_error("verify", code, message)
     try:
         payload = json.loads(result.stdout)
         if not isinstance(payload, dict):
             raise ValueError
     except (json.JSONDecodeError, ValueError):
-        return fail("verification returned invalid data")
+        if result.stderr:
+            code = child_error_code(result.stderr)
+            message = child_error_message(result.stderr, "verification command returned invalid data")
+            return emit_error("verify", code, message)
+        return emit_error("verify", "invalid_subprocess_output", "verification returned invalid data")
+
+    expected_status = {0: "pass", 1: "fail", 3: "needs_baseline"}[result.returncode]
+    if payload.get("status") != expected_status:
+        return emit_error("verify", "invalid_subprocess_output", "verification returned invalid data")
 
     emit(payload)
     return result.returncode
 
 
 def parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(description="Machine-readable visual verification for macOS agents.")
-    commands = root.add_subparsers(dest="command", required=True)
+    root = SeerArgumentParser(description="Machine-readable visual verification for macOS agents.")
+    commands = root.add_subparsers(dest="command", required=True, parser_class=SeerArgumentParser)
 
     doctor_parser = commands.add_parser("doctor", help="Check required capabilities")
     doctor_parser.add_argument("--json", action="store_true", help="Emit JSON (default)")
@@ -333,8 +471,20 @@ def parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
-    args = parser().parse_args()
-    return args.handler(args)
+    argument_parser = parser()
+    argv = sys.argv[1:]
+    try:
+        args = argument_parser.parse_args(argv)
+    except CLIUsageError as exc:
+        command_names = {"doctor", "windows", "capture", "verify"}
+        operation = argv[0] if argv and argv[0] in command_names else None
+        sys.stderr.write(exc.parser.format_usage())
+        return emit_error(operation, "invalid_arguments", exc.message)
+
+    try:
+        return args.handler(args)
+    except SeerCLIError as exc:
+        return emit_error(args.command, exc.code, exc.message)
 
 
 if __name__ == "__main__":
