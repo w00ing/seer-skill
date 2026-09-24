@@ -55,11 +55,16 @@ if [[ -n "${window_id}" ]]; then
   window_id=$((10#${window_id}))
 fi
 
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "error: required command not found: python3 (PNG validation requires Pillow)" >&2
+  exit 2
+fi
+
 if ! command -v screencapture >/dev/null 2>&1; then
   echo "error: required command not found: screencapture" >&2
   exit 2
 fi
-if [[ -z "${window_id}" ]] && ! command -v osascript >/dev/null 2>&1; then
+if ! command -v osascript >/dev/null 2>&1; then
   echo "error: required command not found: osascript" >&2
   exit 2
 fi
@@ -88,14 +93,95 @@ if [[ -z "${out}" ]]; then
   out="${captures_dir}/app-window-${slug}-${ts}-$$-$RANDOM.png"
 fi
 
+# Keep the destination untouched until this invocation produces a complete PNG.
+# A sibling temporary directory makes the final replacement atomic.
+capture_tmp_dir=
+cleanup() {
+  if [[ -n "${capture_tmp_dir}" ]]; then
+    rm -f -- "${capture_tmp_dir}/current.png"
+    rmdir -- "${capture_tmp_dir}"
+  fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+prepare_output() {
+  local parent
+  parent=$(dirname -- "${out}")
+  if ! mkdir -p -- "${parent}" || ! capture_tmp_dir=$(mktemp -d "${parent}/.seer-capture.XXXXXX"); then
+    echo "error: could not prepare capture output: ${out}" >&2
+    exit 2
+  fi
+}
+
+publish_capture() {
+  if python3 - "${capture_tmp_dir}/current.png" "${out}" <<'PY'
+import os
+import sys
+
+try:
+    from PIL import Image
+except ImportError:
+    print("error: Pillow is required for PNG validation; install it in the active python3 environment", file=sys.stderr)
+    raise SystemExit(2)
+
+try:
+    with Image.open(sys.argv[1]) as image:
+        if image.format != "PNG":
+            raise ValueError("capture output is not a PNG")
+        image.verify()
+    # verify() checks the container; load() also decodes the actual pixel data.
+    with Image.open(sys.argv[1]) as image:
+        image.load()
+    os.replace(sys.argv[1], sys.argv[2])
+except (OSError, ValueError, SyntaxError, Image.DecompressionBombError) as exc:
+    print(f"error: could not validate or publish capture: {exc}", file=sys.stderr)
+    raise SystemExit(2)
+PY
+  then
+    echo "${out}"
+  else
+    exit 2
+  fi
+}
+
+require_visible_window() {
+  # screencapture can return cached pixels for a closed window on some macOS
+  # versions. Confirm the ID is still on-screen before and after capture.
+  if ! osascript -l JavaScript - "${window_id}" >/dev/null <<'JXA'
+ObjC.import("CoreGraphics");
+function run(argv) {
+  const raw = $.CGWindowListCopyWindowInfo(
+    $.kCGWindowListOptionOnScreenOnly | $.kCGWindowListExcludeDesktopElements, 0
+  );
+  if (!raw) throw new Error("window server unavailable");
+  const windows = ObjC.deepUnwrap(ObjC.castRefToObject(raw));
+  const visible = windows.some(window =>
+    Number(window.kCGWindowNumber) === Number(argv[0]) &&
+    Number(window.kCGWindowLayer) === 0 && window.kCGWindowIsOnscreen !== false &&
+    Number(window.kCGWindowAlpha) > 0 && Number(window.kCGWindowSharingState) !== 0
+  );
+  if (!visible) throw new Error("window is not visible");
+}
+JXA
+  then
+    echo "error: window ID ${window_id} is unavailable; existing output was preserved" >&2
+    echo "hint: rerun 'seer windows --json'; IDs expire when a window closes or is recreated" >&2
+    exit 2
+  fi
+}
+
 if [[ -n "${window_id}" ]]; then
-  mkdir -p "$(dirname "${out}")"
-  if ! screencapture -x -o -a "-l${window_id}" "${out}"; then
+  require_visible_window
+  prepare_output
+  if ! screencapture -x -o -a -t png "-l${window_id}" "${capture_tmp_dir}/current.png"; then
     echo "error: window ID ${window_id} is unavailable or screen capture permission is missing" >&2
     echo "hint: rerun 'seer windows --json'; IDs expire when a window closes or is recreated" >&2
     exit 2
   fi
-  echo "${out}"
+  require_visible_window
+  publish_capture
   exit 0
 fi
 
@@ -126,10 +212,10 @@ y=${pos#*,}
 w=${size%,*}
 h=${size#*,}
 
-mkdir -p "$(dirname "${out}")"
-if ! screencapture -x -R "${x},${y},${w},${h}" "${out}"; then
+prepare_output
+if ! screencapture -x -t png -R "${x},${y},${w},${h}" "${capture_tmp_dir}/current.png"; then
   echo "error: screen capture failed; verify Screen Recording permission" >&2
   exit 2
 fi
 
-echo "${out}"
+publish_capture
