@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import hashlib
 import os
 import subprocess
 import sys
@@ -147,6 +148,12 @@ class SmokeTests(unittest.TestCase):
             self.assertEqual(exact_payload["window_id"], 202)
             self.assertIsNone(exact_payload["process"])
             self.assertEqual(Path(exact_payload["artifacts"]["current"]), exact.resolve())
+            metadata = json.loads(Path(exact_payload["artifacts"]["metadata"]).read_text())
+            self.assertEqual(metadata, exact_payload["capture"])
+            self.assertEqual(metadata["window_id"], 202)
+            self.assertEqual(metadata["size"], {"width": 4, "height": 4})
+            self.assertTrue(metadata["captured_at"])
+            self.assertEqual(metadata["image_sha256"], hashlib.sha256(exact.read_bytes()).hexdigest())
             exact_args = capture_log.read_text(encoding="utf-8").splitlines()[-1]
             self.assertIn("-a", exact_args)
             self.assertIn("-l202", exact_args)

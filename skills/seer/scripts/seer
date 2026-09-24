@@ -2,9 +2,13 @@
 import argparse
 import importlib.util
 import json
+import math
+import os
 import shutil
 import subprocess
 import sys
+import tempfile
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -355,12 +359,29 @@ def windows(_: argparse.Namespace) -> int:
 
 
 def capture(args: argparse.Namespace) -> int:
+    from capture_metadata import utc_now
+
+    root = Path(os.environ.get("SEER_OUT_DIR", os.environ.get("SEER_TMP_DIR", ".seer")))
+    destination = args.out or str(root / "capture" / f"app-window-{uuid.uuid4().hex}.png")
+    started_at = utc_now()
+    try:
+        parent = Path(destination).expanduser().resolve().parent
+        parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".seer-capture-", dir=parent) as directory:
+            staged = Path(directory) / "current.png"
+            return capture_to_destination(args, staged, destination, started_at)
+    except OSError as exc:
+        return emit_error("capture", "filesystem_error", f"could not prepare capture: {exc}")
+
+
+def capture_to_destination(args, staged, destination, started_at):
+    from capture_metadata import describe_capture, publish_image
+
     command = ["bash", str(SCRIPTS / "capture_app_window.sh")]
     if args.window_id is not None:
         command.extend(["--window-id", str(args.window_id)])
     command.append("--")
-    if args.out or args.process:
-        command.append(args.out or "")
+    command.append(str(staged))
     if args.process:
         command.append(args.process)
 
@@ -380,6 +401,16 @@ def capture(args: argparse.Namespace) -> int:
         return emit_error("capture", "filesystem_error", f"could not inspect capture output: {exc}")
     if not exists:
         return emit_error("capture", "invalid_subprocess_output", f"capture did not create an image: {current}")
+    if current != staged.resolve():
+        return emit_error("capture", "invalid_subprocess_output", "capture returned an unexpected image path")
+    try:
+        metadata = describe_capture(current, window_id=args.window_id, process=args.process,
+                                    started_at=started_at)
+        artifacts = publish_image(current, destination, metadata)
+    except ImportError:
+        return emit_error("capture", "dependency_missing", "Pillow is required for capture metadata")
+    except (OSError, ValueError) as exc:
+        return emit_error("capture", "filesystem_error", f"could not publish capture and metadata: {exc}")
 
     emit(
         {
@@ -388,7 +419,8 @@ def capture(args: argparse.Namespace) -> int:
             "status": "pass",
             "process": args.process,
             "window_id": args.window_id,
-            "artifacts": {"current": str(current)},
+            "artifacts": artifacts,
+            "capture": metadata,
         }
     )
     return 0
@@ -402,6 +434,8 @@ def verify(args: argparse.Namespace) -> int:
         command.append("--resize")
     if args.max_diff_percent is not None:
         command.extend(["--max-diff-percent", args.max_diff_percent])
+    for rectangle in args.ignore_rect:
+        command.extend(["--ignore-rect", rectangle])
     if args.create_baseline:
         command.append("--create-baseline")
     if args.update_baseline:
@@ -411,6 +445,18 @@ def verify(args: argparse.Namespace) -> int:
     result = run(command)
     forward_stderr(result)
     if result.returncode == 2:
+        try:
+            error_payload = json.loads(result.stdout)
+            if (isinstance(error_payload, dict) and error_payload.get("schema_version") == 1
+                    and error_payload.get("operation") == "verify"
+                    and error_payload.get("status") == "error"
+                    and isinstance(error_payload.get("error"), dict)
+                    and isinstance(error_payload["error"].get("code"), str)
+                    and isinstance(error_payload["error"].get("message"), str)):
+                emit(error_payload)
+                return 2
+        except (ValueError, TypeError):
+            pass
         code = child_error_code(result.stderr)
         message = child_error_message(result.stderr, "verification command failed")
         return emit_error("verify", code, message)
@@ -437,6 +483,35 @@ def verify(args: argparse.Namespace) -> int:
     return result.returncode
 
 
+def positive_seconds(value):
+    try:
+        number = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a positive finite number of seconds") from exc
+    if not math.isfinite(number) or number <= 0:
+        raise argparse.ArgumentTypeError("must be a positive finite number of seconds")
+    return number
+
+
+def wait(args):
+    try:
+        from compare_images import ComparisonError, percentage
+        from stable_wait import WaitError, wait_stable
+        args.max_diff_percent = percentage(args.max_diff_percent)
+        payload, code = wait_stable(args, SCRIPTS / "seer")
+    except ImportError:
+        return emit_error("wait", "dependency_missing", "Pillow is required for stability comparison")
+    except argparse.ArgumentTypeError as exc:
+        return emit_error("wait", "invalid_arguments", str(exc))
+    except (ComparisonError, WaitError) as exc:
+        return emit_error("wait", exc.code, exc.message,
+                          extra={"details": getattr(exc, "details", {})})
+    except OSError as exc:
+        return emit_error("wait", "filesystem_error", str(exc))
+    emit(payload)
+    return code
+
+
 def parser() -> argparse.ArgumentParser:
     root = SeerArgumentParser(description="Machine-readable visual verification for macOS agents.")
     commands = root.add_subparsers(dest="command", required=True, parser_class=SeerArgumentParser)
@@ -457,12 +532,25 @@ def parser() -> argparse.ArgumentParser:
     capture_parser.add_argument("--json", action="store_true", help="Emit JSON (default)")
     capture_parser.set_defaults(handler=capture)
 
+    wait_parser = commands.add_parser("wait", help="Wait for stable pixels in one exact window")
+    wait_parser.add_argument("--stable", action="store_true", required=True, help="Require sustained stable pixels")
+    wait_parser.add_argument("--window-id", type=parse_window_id, required=True, help="Exact CGWindowID to sample")
+    wait_parser.add_argument("--timeout", type=positive_seconds, default=10.0, help="Overall seconds budget (default: 10)")
+    wait_parser.add_argument("--interval", type=positive_seconds, default=0.25, help="Seconds between captures (default: 0.25)")
+    wait_parser.add_argument("--stable-for", type=positive_seconds, default=1.0, help="Sustained stable seconds (default: 1)")
+    wait_parser.add_argument("--max-diff-percent", default="0", help="Allowed changed pixels from interval anchor (default: 0)")
+    wait_parser.add_argument("--ignore-rect", action="append", default=[], metavar="X,Y,W,H", help="Exclude pixel rectangle; repeatable")
+    wait_parser.add_argument("--out", help="Publish a stable PNG only on success")
+    wait_parser.add_argument("--json", action="store_true", help="Emit JSON (default)")
+    wait_parser.set_defaults(handler=wait)
+
     verify_parser = commands.add_parser("verify", help="Compare an image with an approved baseline")
     verify_parser.add_argument("current", help="Current PNG path")
     verify_parser.add_argument("baseline", help="Baseline name")
     verify_parser.add_argument("--loop-dir", help="Override visual loop storage")
     verify_parser.add_argument("--resize", action="store_true", help="Resize current to baseline size")
     verify_parser.add_argument("--max-diff-percent", help="Allowed changed pixels, 0-100 (default: 0)")
+    verify_parser.add_argument("--ignore-rect", action="append", default=[], metavar="X,Y,W,H", help="Exclude baseline pixel rectangle; repeatable")
     verify_parser.add_argument("--create-baseline", action="store_true", help="Create a missing baseline")
     verify_parser.add_argument("--update-baseline", action="store_true", help="Replace an existing baseline")
     verify_parser.add_argument("--json", action="store_true", help="Emit JSON (default)")
@@ -476,7 +564,7 @@ def main() -> int:
     try:
         args = argument_parser.parse_args(argv)
     except CLIUsageError as exc:
-        command_names = {"doctor", "windows", "capture", "verify"}
+        command_names = {"doctor", "windows", "capture", "verify", "wait"}
         operation = argv[0] if argv and argv[0] in command_names else None
         sys.stderr.write(exc.parser.format_usage())
         return emit_error(operation, "invalid_arguments", exc.message)
