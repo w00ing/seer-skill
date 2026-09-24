@@ -1,33 +1,56 @@
-# Seer evidence workflow
+# Seer agent workflow
 
-Seer v0.6 provides a local, machine-readable loop for checking what a native macOS app displayed. It captures and reports visible pixels; app interaction stays with the agent or a separate UI automation layer.
+Seer 0.7 combines pixel evidence with explicit semantic queries for a native macOS window. It observes the UI; app interaction stays with the agent or a separate automation layer.
 
-## Implemented workflow
+## Capture and verify pixels
 
-1. Run `skills/seer/scripts/seer doctor --json` to check platform, visible-window Accessibility readiness, Pillow, and optional video tools. Read `frontmost_process` separately from `capabilities.window_query.authorized`; Screen Recording permission is checked during capture.
-2. Run `skills/seer/scripts/seer windows --json`, then select a returned `window_id`. The native identifier addresses one exact visible window and remains valid when it moves or changes order. It expires when that window closes or is recreated; `index` is only informational.
-3. If the app is animating, wait for a stable capture with `skills/seer/scripts/seer wait --stable --window-id <id> --timeout 10 --interval 0.25 --stable-for 1 --max-diff-percent 0 --out .seer/capture/current.png --json`. The command compares at least two frames from the same ID against a stable-interval anchor. A change resets the interval. Timeout covers capture subprocesses and polling, returns `fail` (exit 1, reason `timeout`), and leaves any existing output untouched. Capture or invalid-input errors return `error` (exit 2). A successful result has `reason: "stable"`; `condition` reports `stable_for`, `interval`, `timeout`, `max_diff_percent`, `ignore_rects`, and `reference: "interval_anchor"`. Capture provenance is nested under `capture` and uses `source: "seer.capture"`; image and sidecar paths are under `artifacts`. A stable result is a pixel condition, not proof of correct labels, controls, or behavior. For immediate capture, use `capture --window-id <id> --out .seer/capture/current.png --json`.
-4. Inspect the returned `artifacts.current` image before making claims. Capture writes a hash-bound `.seer.json` sidecar containing available capture time, window ID, image dimensions, and DPI metadata; `artifacts.metadata` contains its path. External, missing, or stale sidecar data is not invented; unknown values remain null.
-5. Compare against an explicitly approved baseline with `skills/seer/scripts/seer verify .seer/capture/current.png <name> --json`. Add repeated `--ignore-rect X,Y,WIDTH,HEIGHT` options for known dynamic regions. Coordinates refer to baseline PNG pixels. Rectangles have half-open bounds, must be fully in bounds, and overlapping areas count once. Ignored pixels are excluded from both changed-pixel count and denominator. A malformed rectangle or mask covering the full image is an error.
-6. Inspect the report and diff when the result is `fail`, make a code change through the appropriate development workflow, then capture and compare again. A comparison with valid baseline/current images preserves the baseline snapshot, current image, report, manifest, and options in an immutable bundle under `.seer/loop/runs/<unique>/`, with relative artifact paths and checksums. A diff is included when pixel comparison succeeds; a dimension or scale mismatch still has the snapshots and report but no diff. Missing baselines and invalid inputs rejected before comparison setup leave the loop directory untouched. An approved `--update-baseline` does not change the baseline snapshot in the run bundle.
+1. Run `skills/seer/scripts/seer doctor --json`, then `windows --json`; select the exact returned `window_id`.
+2. Capture the window, or use `wait --stable` while it is settling. Inspect the returned image with `view_image` before making visual claims.
+3. Compare with `verify <current.png> <baseline> --json`. A missing baseline returns `needs_baseline`; create or replace one only after the user explicitly approves it.
+4. Inspect the report and diff after a failed comparison, then repeat after changes. Pixel similarity and stable pixels do not establish semantic correctness.
 
-## Interface and evidence boundaries
+## Inspect and assert UI semantics
 
-The CLI prints one JSON object for command results and operational errors; diagnostics go to stderr. Operational errors use `schema_version: 1`, `status: "error"`, an operation name (or `null`), and an `error` object with a stable code and message. `--help` prints ordinary help text. Comparison errors include `image_size_mismatch` and `image_scale_mismatch`; direct comparator errors also include `image_not_found` and `invalid_image`.
+Use Accessibility as the default source. It reads the app's exposed Accessibility tree and returns element roles, names, values, bounds, and enabled state. OCR is an opt-in text source over the captured window image; it does not reveal control state.
 
-PNG dimensions and known DPI values are reported. Seer never resizes implicitly; `verify --resize` explicitly opts into the baseline pixel grid, and `scale_evidence` records that choice. A known DPI mismatch without the flag returns `image_scale_mismatch`; a dimension mismatch returns `image_size_mismatch`. Unknown DPI or scale is not treated as a verified scale match. Screen Recording and Accessibility are separate macOS permissions. A process can be frontmost while window enumeration is unavailable. A failed doctor probe does not distinguish permission denial from the absence of an accessible visible window.
+```bash
+SEER=skills/seer/scripts/seer
 
-- A successful command-stub check proves the CLI handles controlled subprocess responses. It does not prove macOS permissions are granted, a real window is captured correctly, or pixels match the user's expectation.
-- Pixel comparison establishes measured image similarity only. It does not confirm application semantics or user intent.
-- Keep captures, diffs, reports, and run bundles local under `.seer/`; version baselines only when the project explicitly intends to retain them.
-- Never create or replace a real baseline without explicit user approval.
+# Read exposed roles, names, values, bounds, and enabled state.
+"$SEER" inspect --window-id 12345 --source ax --json
+
+# Match text case-sensitively within an individual AX name or value.
+"$SEER" assert --window-id 12345 --text "Saved" --match exact --json
+
+# Ask OCR to find text in the visible pixels and require a confidence threshold.
+"$SEER" assert --window-id 12345 --source ocr --text "Saved" \
+  --min-confidence 0.8 --json
+
+# Wait until a semantic condition is observed, or wait for pixel stability.
+"$SEER" wait --text "Ready" --window-id 12345 --timeout 10 --interval 0.25 --json
+"$SEER" wait --stable --window-id 12345 --timeout 10 --interval 0.25 \
+  --stable-for 1 --max-diff-percent 0 --json
+```
+
+`assert` supports `--text`, `--text-absent`, `--enabled`, and `--disabled`; add `--role AXButton` to restrict a control-state query to that exact role. Text matching is case-sensitive and `--match` is `contains` by default or `exact`. Control names match exactly. Semantic `wait` accepts those conditions or the existing `--stable` pixel condition.
+
+Without `--source`, semantic commands query Accessibility. OCR is selected only with `--source ocr`; Seer never switches sources automatically. A region uses `X,Y,WIDTH,HEIGHT` in window-local points with a top-left origin. Accessibility filtering uses the centers of element bounds; OCR crops the corresponding image region and maps recognized bounds back to the window. `--ignore-rect` remains a visual-comparison option measured in baseline PNG pixels.
+
+`inspect` returns exit 0 when a query completes, even if its `complete` field is false; inspect callers must check `complete` and `issues`. In `assert` and semantic `wait`, insufficient evidence is an operational error (exit 2), never a successful absence assertion. Empty, partial, or truncated Accessibility text is insufficient. A complete Accessibility result can establish absence only from the exposed tree, not from every pixel. OCR can support a positive text match above the confidence threshold; a weak match is insufficient. OCR cannot prove that text is absent from the image, so an OCR absence query is insufficient unless recognized matching text clearly makes the assertion fail. OCR cannot check whether a control is enabled. A valid semantic mismatch returns `fail` (exit 1); a semantic wait that does not reach its condition by the deadline returns a timeout failure.
+
+Semantic queries use a small Swift helper built against public macOS APIs. A first query compiles it into `.seer/cache` if needed and requires `swiftc` from Xcode Command Line Tools; allow a longer first-query deadline with `--timeout 30` if compilation is slow. Capture and image verification do not require the helper. Accessibility messaging has an explicit API timeout facility ([Apple Accessibility API](https://developer.apple.com/documentation/applicationservices/1459345-axuielementsetmessagingtimeout)); it cannot make an app expose a complete tree. Window-to-Accessibility mapping must be unique; stale or ambiguous matches are errors. OCR uses Apple's Vision text-recognition request, which reports recognized text observations and their image regions ([Apple Vision documentation](https://developer.apple.com/documentation/vision/vnrecognizetextrequest)). This is text evidence, not a semantic control tree.
+
+Inspection reports and any OCR captures stay local under `.seer/inspect`. Assertion and wait verdicts are emitted on stdout and refer to these reports; save stdout if you need to retain the verdict. The visual comparison replay command does not replay semantic verdicts. No API key or external network request is used. Inspect the emitted source and confidence evidence before relying on an assertion.
+
+## Result handling and limits
+
+Commands emit one JSON result on stdout and diagnostics on stderr. Exit 0 means the requested condition passed; exit 1 means a valid comparison/assertion failed or a condition wait reached its deadline; exit 2 means input, permission, dependency, query timeout, or evidence was insufficient; exit 3 means a visual baseline is missing. A wait whose reads fail or whose evidence is insufficient returns exit 2. Read the JSON evidence and error code before deciding whether to retry.
+
+Keep captures, diffs, reports, and run bundles under `.seer/`. Seer does not interact with the app or infer approval to create or replace a visual baseline. See [Visual loop](visual-loop.md) for image comparison and evidence bundle details, and [v0.7 validation](v0.7-validation.md) for the pending validation record. [v0.6 validation](v0.6-validation.md) is a historical record.
 
 <a id="later-directions"></a>
 
 ## Roadmap
 
-- v0.7: Accessibility-based UI assertions and optional OCR.
 - v0.8: a thin local MCP adapter and evaluated agent workflows.
 - v0.9: installation, compatibility, and release hardening based on actual use.
-
-For the v0.6 test checklist and evidence status, see [v0.6 validation](v0.6-validation.md). The prior release's record is [v0.5 validation](v0.5-validation.md). Pixel metrics and artifact details are described in [Visual loop](visual-loop.md).

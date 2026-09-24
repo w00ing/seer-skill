@@ -6,7 +6,7 @@ license: MIT
 
 # Seer
 
-Use the unified CLI for visual evidence. Keep specialist scripts for recording, annotation, wireframing, and typing. Seer requires macOS with Screen Recording and Accessibility permissions.
+Use the unified CLI for visual evidence. Keep specialist scripts for recording, annotation, wireframing, and typing. Seer requires macOS with Screen Recording and Accessibility permissions. Semantic queries are optional; a first query may compile a Swift helper and requires `swiftc` from Xcode Command Line Tools.
 
 ## Core workflow
 
@@ -19,22 +19,56 @@ Use the unified CLI for visual evidence. Keep specialist scripts for recording, 
 
 Never create or replace a baseline without explicit user approval. A missing baseline returns `needs_baseline` (exit 3); after approval, rerun with `--create-baseline`. Treat `--update-baseline` as a destructive approval action.
 
+## Semantic inspection
+
+Use `inspect`, `assert`, or a semantic `wait` when the question concerns exposed labels, values, roles, or enabled state. Accessibility is the default source; select `--source ocr` explicitly to inspect text in the window pixels.
+
+```bash
+python3 scripts/seer inspect --window-id 12345 --source ax --json
+python3 scripts/seer assert --window-id 12345 --text "Saved" --match exact --json
+python3 scripts/seer assert --window-id 12345 --enabled "Save" --role AXButton --json
+python3 scripts/seer assert --window-id 12345 --source ocr --text "Saved" \
+  --min-confidence 0.8 --json
+python3 scripts/seer wait --text "Ready" --window-id 12345 \
+  --timeout 10 --interval 0.25 --json
+```
+
+`inspect` returns Accessibility role, name, value, bounds, and enabled state; its OCR source returns recognized text with confidence and bounds. `assert` supports `--text`, `--text-absent`, `--enabled`, and `--disabled`. Text checks compare case-sensitively against individual Accessibility name/value fields. `--match` defaults to `contains` and also accepts `exact`; control names match exactly. Use `--role` to restrict an enabled/disabled query to that exact Accessibility role. Semantic `wait` accepts one of those conditions or the existing `--stable` pixel condition.
+
+Queries never fall back between Accessibility and OCR. `--region X,Y,WIDTH,HEIGHT` uses window-local points from the top-left. Accessibility selects elements whose bounds centers are in the region; OCR crops the corresponding image region and translates its recognized bounds back to window coordinates. Visual `--ignore-rect` options remain measured in baseline PNG pixels.
+
+An `inspect` result with exit 0 means the read completed; check `complete` and `issues` before using its evidence. `assert` and semantic `wait` turn incomplete observations into errors. Named static text and unknown roles cannot establish a control's enabled state. Inspection reports are saved locally; save assertion/wait stdout to preserve the verdict. Semantic verdicts do not use visual comparison replay.
+
+Treat missing evidence as error, never as proof of absence. Empty or incomplete Accessibility text is insufficient; complete-tree absence applies only to the app's exposed Accessibility tree. OCR can establish a positive text match above `--min-confidence`, but low-confidence evidence is insufficient. OCR cannot prove text absence and cannot check control state. A valid mismatch returns exit 1, operational or insufficient-evidence errors return exit 2, and a wait whose valid condition remains unmet at its deadline returns a timeout failure. Inspect the returned source/confidence evidence. The [agent workflow](../../docs/seer-agent-loop.md) describes these evidence limits and Apple API boundaries.
+
 ## CLI interface
 
 ```text
 python3 scripts/seer doctor --json
 python3 scripts/seer windows --json
 python3 scripts/seer capture [--window-id ID|--process NAME] [--out PATH] --json
+python3 scripts/seer inspect --window-id ID [--source ax|ocr]
+                           [--region X,Y,WIDTH,HEIGHT] [--timeout SEC] --json
+python3 scripts/seer assert --window-id ID [--source ax|ocr]
+                           (--text TEXT|--text-absent TEXT|--enabled NAME|--disabled NAME)
+                           [--role AXButton] [--match exact|contains]
+                           [--min-confidence N] [--region X,Y,WIDTH,HEIGHT]
+                           [--timeout SEC] --json
 python3 scripts/seer wait --stable --window-id ID [--timeout SEC] [--interval SEC]
                           [--stable-for SEC] [--max-diff-percent N]
                           [--ignore-rect X,Y,WIDTH,HEIGHT ...] [--out PATH] --json
+python3 scripts/seer wait (--stable|--text TEXT|--text-absent TEXT|--enabled NAME|--disabled NAME)
+                          --window-id ID [--source ax|ocr] [--role AXButton]
+                          [--match exact|contains] [--min-confidence N]
+                          [--region X,Y,WIDTH,HEIGHT] [--timeout SEC]
+                          [--interval SEC] --json
 python3 scripts/seer verify [--loop-dir DIR] [--resize] [--max-diff-percent N]
                             [--ignore-rect X,Y,WIDTH,HEIGHT ...]
                             [--create-baseline|--update-baseline]
                             CURRENT BASELINE --json
 ```
 
-Commands emit one JSON object to stdout and diagnostics to stderr, except `--help`, which prints ordinary help text. Operational errors return exit 2 with `schema_version: 1`, `operation` (the recognized subcommand or `null`), `status: "error"`, and `error: {code, message}`. Stable error codes are `invalid_arguments`, `platform_unsupported`, `dependency_missing`, `subprocess_failed`, `invalid_subprocess_output`, `accessibility_required`, `filesystem_error`, and `not_ready`. Doctor errors also include `capabilities` and `frontmost_process`. Exit 0 means pass, 1 means visual fail, 2 means operational error, and 3 means `needs_baseline`. The default allowed difference is 0%.
+Commands emit one JSON object to stdout and diagnostics to stderr, except `--help`, which prints ordinary help text. Operational errors return exit 2 with `schema_version: 1`, `operation` (the recognized subcommand or `null`), `status: "error"`, and `error: {code, message}`. Doctor errors also include `capabilities` and `frontmost_process`. Exit 0 means pass, exit 1 means a valid visual or semantic condition failed (including a condition wait timeout), exit 2 means an operational error or insufficient semantic evidence, and exit 3 means `needs_baseline`. The default allowed visual difference is 0%.
 
 `window_id` is the native, session-scoped identifier for one exact window. It survives movement and reordering, but becomes stale when the window closes or is recreated; rerun `windows` before retrying. The 1-based `index` remains informational. `capture --process` remains a compatibility fallback that targets the process's first window.
 

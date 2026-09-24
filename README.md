@@ -119,6 +119,8 @@ PNG dimensions and known DPI differences are reported. Seer does not silently re
 | Check required capabilities | `skills/seer/scripts/seer doctor --json` |
 | List visible app windows | `skills/seer/scripts/seer windows --json` |
 | Capture an exact visible window | `skills/seer/scripts/seer capture --window-id <id> --json` |
+| Inspect exposed UI text and controls | `skills/seer/scripts/seer inspect --window-id <id> --source ax --json` |
+| Assert visible text or a control state | `skills/seer/scripts/seer assert --window-id <id> --text "Save" --json` |
 | Verify against a named baseline | `skills/seer/scripts/seer verify <current.png> <name> --json` |
 | Wait for an exact window to become visually stable | `skills/seer/scripts/seer wait --stable --window-id <id> --timeout 10 --interval 0.25 --stable-for 1 --json` |
 | Record a short app flow | `bash skills/seer/scripts/record_app_window.sh --duration 3` |
@@ -129,6 +131,10 @@ Use `--help` on the CLI or a subcommand for complete options. `windows` returns 
 `doctor` reports the frontmost process separately from the visible-window Accessibility probe: `frontmost_process` is its own field, while the probe result is reported by `capabilities.window_query.authorized`. A false result means Seer could not confirm accessible visible-window access; it does not by itself distinguish a permission denial from the absence of a visible window. Screen Recording permission is checked when capture runs.
 
 Exact-ID capture checks that the window is on-screen before and after capture. This prevents macOS from returning cached pixels for a closed window as a successful new capture. Minimized or hidden windows must be made visible and rediscovered first.
+
+### Semantic inspection
+
+Seer 0.7 adds explicit Accessibility-tree queries and optional macOS Vision OCR. `inspect`, `assert`, and the semantic forms of `wait` default to Accessibility; OCR runs only with `--source ocr`. Semantic queries may need `swiftc` from Xcode Command Line Tools on first use. They do not change the visual capture or baseline workflow. See the [agent workflow](docs/seer-agent-loop.md) for command examples, evidence limits, and coordinate rules.
 
 ## Advanced workflows
 
@@ -174,13 +180,12 @@ Set `SEER_OUT_DIR` to change the output root or `SEER_LOOP_DIR` to change only v
 - Typing fails: grant Accessibility and Automation → System Events permissions.
 - Capture or diff reports missing Pillow: install it in the active `python3` environment used by Seer.
 
-## v0.6 validation
+## v0.7 release and validation
 
-The v0.6.0 GitHub release and tag are pending publication; see the local [v0.6.0 release notes](docs/releases/v0.6.0.md). The v0.6 validation checklist and current evidence status are in [v0.6 validation](docs/v0.6-validation.md). The [v0.5 validation record](docs/v0.5-validation.md) remains available as historical evidence. CI uses command stubs for deterministic behavior; native window behavior is exercised separately with an opt-in AppKit fixture.
+The v0.7.0 release and tag are pending publication. Automated checks pass; live window validation is still pending. See the [release notes](docs/releases/v0.7.0.md) and [validation status](docs/v0.7-validation.md). The [v0.6 validation page](docs/v0.6-validation.md) is retained as a historical record; the [v0.5 validation record](docs/v0.5-validation.md) documents the earlier release.
 
 ## Roadmap
 
-- v0.7: Accessibility-based UI assertions and optional OCR.
 - v0.8: a thin local MCP adapter and evaluated agent workflows.
 - v0.9: installation, compatibility, and release hardening based on actual use.
 

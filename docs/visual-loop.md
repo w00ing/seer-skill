@@ -46,8 +46,23 @@ python3 skills/seer/scripts/compare_images.py baseline.png current.png --resize
 
 Its `percent_changed` field is the share of compared pixels that differ, and `avg_diff_percent` is the average per-pixel difference intensity. `pixels_total` is the compared-pixel denominator, `pixels_excluded` is the number excluded by masks, and `pixels_image_total` is the full baseline area. `scale_evidence` records whether dimensions and known PNG DPI values matched and whether normalization was explicitly requested. The unified CLI adds approved-baseline management and per-run evidence storage. Direct image errors include `image_not_found` and `invalid_image`.
 
+## Semantic queries
+
+Seer 0.7 can query the selected window's Accessibility tree or, when explicitly requested, run OCR over its visible pixels:
+
+```bash
+skills/seer/scripts/seer inspect --window-id 12345 --source ax --json
+skills/seer/scripts/seer assert --window-id 12345 --text "Saved" --match exact --json
+skills/seer/scripts/seer assert --window-id 12345 --source ocr --text "Saved" \
+  --min-confidence 0.8 --json
+```
+
+Accessibility is the default and reports exposed roles, names, values, bounds, and enabled state. Text assertions check individual name/value fields case-sensitively; controls match by exact name. OCR is opt-in and reports recognized text, confidence, and bounds. It can establish a sufficiently confident positive text match, but cannot establish control state or prove text absence. For assertions and semantic waits, empty, truncated, partial, timed-out, or weak evidence is an operational error (exit 2), not a passing absence check. An inspection can finish successfully with `complete: false`; inspect callers must check that field and `issues`. A valid mismatch is `fail` (exit 1). See [Seer agent workflow](seer-agent-loop.md) for wait conditions, region mapping, and the full evidence limits.
+
+`--region` coordinates are window-local points from the top-left. Accessibility checks element-bound centers against this region; OCR crops the corresponding image area and maps text bounds back to the window. This coordinate system is separate from `--ignore-rect`, which uses baseline PNG pixels for image comparisons.
+
 ## Results and errors
 
 The unified CLI returns `pass` with exit 0 when the comparison is within threshold, `fail` with exit 1 when it exceeds the threshold or stability times out, `error` with exit 2 for an operational failure, and `needs_baseline` with exit 3 when the named baseline is absent. Operational errors produce one JSON object on stdout with `schema_version: 1`, `operation` (recognized subcommand or `null`), `status: "error"`, and `error: {code, message}`; diagnostics go to stderr. Doctor errors also carry the capability report and `frontmost_process`. The `--help` forms print ordinary help text.
 
-See [v0.6 validation](v0.6-validation.md) for the test checklist and its recorded evidence status. The [v0.5 validation record](v0.5-validation.md) documents the preceding release.
+See [v0.7 validation](v0.7-validation.md) for the pending check status. The [v0.6 validation page](v0.6-validation.md) is a historical record, and the [v0.5 validation record](v0.5-validation.md) documents the earlier release.
