@@ -1,7 +1,8 @@
 // Local, opt-in AppKit fixture for exact-window capture QA. Never run in CI.
 // Build: swiftc tests/manual/window_fixture.swift -o .seer/qa/SeerWindowFixture
 // Commands on stdin: move, reorder, close, recreate, v06-start, v06-static,
-// v06-settle, v06-pulse, v06-outside, quit.
+// v06-settle, v06-pulse, v06-outside, v07-start, v07-loading,
+// v07-ready-delayed, v07-close, quit.
 import AppKit
 
 let app = NSApplication.shared
@@ -12,6 +13,9 @@ var v06InsidePatch: ColorPatchView?
 var v06OutsidePatch: ColorPatchView?
 var v06Timers: [String: Timer] = [:]
 var v06Generation = 0
+var v07Window: NSWindow?
+var v07StatusLabel: NSTextField?
+var v07Generation = 0
 
 final class ColorPatchView: NSView {
     private(set) var hue: CGFloat
@@ -37,6 +41,24 @@ final class ColorPatchView: NSView {
         // AppKit may supply an expanded dirty rect for non-clipping views.
         // Paint only this patch's bounds, never neighboring fixture content.
         bounds.fill()
+    }
+}
+
+final class CanvasEvidenceView: NSView {
+    override var isOpaque: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor(calibratedRed: 0.08, green: 0.12, blue: 0.17, alpha: 1).setFill()
+        bounds.fill()
+
+        let text = NSAttributedString(
+            string: "Canvas Evidence",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 27, weight: .semibold),
+                .foregroundColor: NSColor.white,
+            ]
+        )
+        text.draw(in: NSRect(x: 20, y: 38, width: bounds.width - 40, height: 38))
     }
 }
 
@@ -120,6 +142,58 @@ func animateV06Patch(_ name: String, view: ColorPatchView, settleAfter: TimeInte
     }
 }
 
+func cancelV07Transition() {
+    v07Generation += 1
+}
+
+func setV07Status(_ value: String) {
+    v07StatusLabel?.stringValue = value
+}
+
+func makeV07Window() {
+    guard v07Window == nil else {
+        v07Window?.makeKeyAndOrderFront(nil)
+        return
+    }
+
+    let window = NSWindow(
+        contentRect: NSRect(x: 900, y: 240, width: 520, height: 360),
+        styleMask: [.titled, .closable], backing: .buffered, defer: false
+    )
+    window.title = "Seer QA v0.7"
+    window.isReleasedWhenClosed = false
+    window.backgroundColor = NSColor(calibratedRed: 0.11, green: 0.14, blue: 0.18, alpha: 1)
+
+    let status = NSTextField(labelWithString: "Seer Ready")
+    status.font = .systemFont(ofSize: 30, weight: .semibold)
+    status.textColor = .white
+    status.frame = NSRect(x: 36, y: 275, width: 448, height: 42)
+    status.setAccessibilityLabel("Status")
+    window.contentView?.addSubview(status)
+
+    let continueButton = NSButton(title: "Continue", target: nil, action: nil)
+    continueButton.bezelStyle = .rounded
+    continueButton.isEnabled = true
+    continueButton.frame = NSRect(x: 36, y: 212, width: 180, height: 38)
+    window.contentView?.addSubview(continueButton)
+
+    let unavailableButton = NSButton(title: "Unavailable", target: nil, action: nil)
+    unavailableButton.bezelStyle = .rounded
+    unavailableButton.isEnabled = false
+    unavailableButton.frame = NSRect(x: 236, y: 212, width: 180, height: 38)
+    window.contentView?.addSubview(unavailableButton)
+
+    // Deliberately paint the evidence text in a plain NSView. The view has no
+    // accessibility label, role, or children, so OCR can find text that AX
+    // cannot expose.
+    let canvas = CanvasEvidenceView(frame: NSRect(x: 36, y: 54, width: 448, height: 112))
+    window.contentView?.addSubview(canvas)
+
+    v07Window = window
+    v07StatusLabel = status
+    window.makeKeyAndOrderFront(nil)
+}
+
 func acknowledge(_ command: String) {
     print(command)
     fflush(stdout)
@@ -163,6 +237,28 @@ DispatchQueue.global().async {
                 if let outside = v06OutsidePatch {
                     animateV06Patch("outside", view: outside)
                 }
+            case "v07-start":
+                cancelV07Transition()
+                makeV07Window()
+                setV07Status("Seer Ready")
+            case "v07-loading":
+                cancelV07Transition()
+                makeV07Window()
+                setV07Status("Loading")
+            case "v07-ready-delayed":
+                cancelV07Transition()
+                makeV07Window()
+                setV07Status("Loading")
+                let generation = v07Generation
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                    guard generation == v07Generation, v07Window != nil else { return }
+                    setV07Status("Seer Ready")
+                }
+            case "v07-close":
+                cancelV07Transition()
+                v07Window?.close()
+                v07Window = nil
+                v07StatusLabel = nil
             case "quit":
                 app.terminate(nil)
             default:

@@ -493,7 +493,90 @@ def positive_seconds(value):
     return number
 
 
+def parse_region(value):
+    try:
+        parts = tuple(float(item) for item in value.split(","))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("region must be X,Y,WIDTH,HEIGHT in window points") from exc
+    if (len(parts) != 4 or not all(math.isfinite(item) for item in parts)
+            or parts[0] < 0 or parts[1] < 0 or parts[2] <= 0 or parts[3] <= 0):
+        raise argparse.ArgumentTypeError("region needs finite nonnegative coordinates and positive dimensions")
+    return parts
+
+
+def confidence(value):
+    try:
+        number = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("confidence must be between 0 and 1") from exc
+    if not math.isfinite(number) or not 0 <= number <= 1:
+        raise argparse.ArgumentTypeError("confidence must be finite and between 0 and 1")
+    return number
+
+
+def condition_options(args):
+    return {key: getattr(args, key) for key in
+            ("text", "text_absent", "enabled", "disabled", "role", "match", "min_confidence")}
+
+
+def nonempty(value):
+    if not value.strip():
+        raise argparse.ArgumentTypeError("condition and selector strings must not be empty")
+    return value
+
+
+def ui_condition_error(args):
+    control = args.enabled is not None or args.disabled is not None
+    if control and args.source == "ocr":
+        return "control state assertions require Accessibility (--source ax)"
+    if args.role and not control:
+        return "--role requires --enabled or --disabled"
+    return None
+
+
+def inspect_ui(args):
+    from ui_inspect import InspectionError, inspect_ui as read_ui
+    try:
+        payload = read_ui(args.window_id, source=args.source, region=args.region, timeout=args.timeout)
+    except InspectionError as exc:
+        return emit_error("inspect", exc.code, exc.message, extra={"details": exc.details})
+    emit(payload)
+    return 0
+
+
+def assert_ui(args):
+    invalid = ui_condition_error(args)
+    if invalid:
+        return emit_error("assert", "invalid_arguments", invalid)
+    from ui_inspect import InspectionError, inspect_ui as read_ui
+    from ui_assertions import evaluate
+    try:
+        snapshot = read_ui(args.window_id, source=args.source, region=args.region, timeout=args.timeout)
+        payload = evaluate(snapshot, **condition_options(args))
+    except InspectionError as exc:
+        return emit_error("assert", exc.code, exc.message, extra={"details": exc.details})
+    if payload.get("status") == "error":
+        print(f"error: {payload['error']['message']}", file=sys.stderr)
+    emit(payload)
+    return {"pass": 0, "fail": 1, "error": 2}[payload["status"]]
+
+
 def wait(args):
+    if not args.stable:
+        invalid = ui_condition_error(args)
+        if invalid:
+            return emit_error("wait", "invalid_arguments", invalid)
+        from ui_assertions import wait_for_condition
+        if args.ignore_rect or args.out or args.max_diff_percent != "0" or args.stable_for != 1:
+            return emit_error("wait", "invalid_arguments", "pixel comparison and output options require --stable")
+        payload, code = wait_for_condition(args.window_id, timeout=args.timeout, interval=args.interval,
+                                          source=args.source, region=args.region, **condition_options(args))
+        if payload.get("status") == "error":
+            print(f"error: {payload['error']['message']}", file=sys.stderr)
+        emit(payload)
+        return code
+    if args.source != "ax" or args.region or args.role or args.match != "contains" or args.min_confidence != 0.8:
+        return emit_error("wait", "invalid_arguments", "text, region and source options require a UI condition")
     try:
         from compare_images import ComparisonError, percentage
         from stable_wait import WaitError, wait_stable
@@ -532,8 +615,39 @@ def parser() -> argparse.ArgumentParser:
     capture_parser.add_argument("--json", action="store_true", help="Emit JSON (default)")
     capture_parser.set_defaults(handler=capture)
 
-    wait_parser = commands.add_parser("wait", help="Wait for stable pixels in one exact window")
-    wait_parser.add_argument("--stable", action="store_true", required=True, help="Require sustained stable pixels")
+    def add_ui_options(command, *, window=True, timeout=True):
+        if window:
+            command.add_argument("--window-id", type=parse_window_id, required=True, help="Exact CGWindowID")
+        command.add_argument("--source", choices=("ax", "ocr"), default="ax", help="Accessibility (default) or explicit local Vision OCR")
+        command.add_argument("--region", type=parse_region, metavar="X,Y,W,H", help="Window-local points, top-left origin")
+        if timeout:
+            command.add_argument("--timeout", type=positive_seconds, default=10.0, help="Overall query budget, including first helper build")
+
+    def add_conditions(command, *, stable=False):
+        conditions = command.add_mutually_exclusive_group(required=True)
+        if stable:
+            conditions.add_argument("--stable", action="store_true", help="Require sustained stable pixels")
+        conditions.add_argument("--text", type=nonempty, help="Assert text is present")
+        conditions.add_argument("--text-absent", type=nonempty, help="Assert text is absent from complete Accessibility evidence")
+        conditions.add_argument("--enabled", type=nonempty, metavar="NAME", help="Assert an exactly named AX control is enabled")
+        conditions.add_argument("--disabled", type=nonempty, metavar="NAME", help="Assert an exactly named AX control is disabled")
+        command.add_argument("--role", type=nonempty, help="Exact Accessibility role for a control selector")
+        command.add_argument("--match", choices=("contains", "exact"), default="contains", help="Case-sensitive text matching")
+        command.add_argument("--min-confidence", type=confidence, default=0.8, help="Minimum OCR confidence (default: 0.8)")
+
+    inspect_parser = commands.add_parser("inspect", help="Read UI evidence from an exact window")
+    add_ui_options(inspect_parser)
+    inspect_parser.add_argument("--json", action="store_true", help="Emit JSON (default)")
+    inspect_parser.set_defaults(handler=inspect_ui)
+
+    assert_parser = commands.add_parser("assert", help="Assert text or an Accessibility control state")
+    add_ui_options(assert_parser)
+    add_conditions(assert_parser)
+    assert_parser.add_argument("--json", action="store_true", help="Emit JSON (default)")
+    assert_parser.set_defaults(handler=assert_ui)
+
+    wait_parser = commands.add_parser("wait", help="Wait for stable pixels or a UI condition in one exact window")
+    add_conditions(wait_parser, stable=True)
     wait_parser.add_argument("--window-id", type=parse_window_id, required=True, help="Exact CGWindowID to sample")
     wait_parser.add_argument("--timeout", type=positive_seconds, default=10.0, help="Overall seconds budget (default: 10)")
     wait_parser.add_argument("--interval", type=positive_seconds, default=0.25, help="Seconds between captures (default: 0.25)")
@@ -542,6 +656,7 @@ def parser() -> argparse.ArgumentParser:
     wait_parser.add_argument("--ignore-rect", action="append", default=[], metavar="X,Y,W,H", help="Exclude pixel rectangle; repeatable")
     wait_parser.add_argument("--out", help="Publish a stable PNG only on success")
     wait_parser.add_argument("--json", action="store_true", help="Emit JSON (default)")
+    add_ui_options(wait_parser, window=False, timeout=False)
     wait_parser.set_defaults(handler=wait)
 
     verify_parser = commands.add_parser("verify", help="Compare an image with an approved baseline")
@@ -564,7 +679,7 @@ def main() -> int:
     try:
         args = argument_parser.parse_args(argv)
     except CLIUsageError as exc:
-        command_names = {"doctor", "windows", "capture", "verify", "wait"}
+        command_names = {"doctor", "windows", "capture", "verify", "wait", "inspect", "assert"}
         operation = argv[0] if argv and argv[0] in command_names else None
         sys.stderr.write(exc.parser.format_usage())
         return emit_error(operation, "invalid_arguments", exc.message)
