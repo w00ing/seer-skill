@@ -52,7 +52,7 @@ Use Seer to capture the Settings window and compare it with the approved `settin
 
 ## 30-second verification loop
 
-Image verification requires Pillow in the active `python3` environment. If it is not already available:
+Capture validation, image verification, and annotation require Pillow in the active `python3` environment. If it is not already available:
 
 ```bash
 python3 -m venv .local/venv
@@ -81,7 +81,7 @@ SEER=skills/seer/scripts/seer
 "$SEER" verify .seer/capture/current.png settings --max-diff-percent 0.5 --json
 ```
 
-Each command emits at most one JSON object to stdout; diagnostics go to stderr. Capture paths are returned as `artifacts.current`. Verification writes the current image, diff, history, and report under `.seer/loop/`.
+Each CLI invocation emits one JSON result to stdout, including on operational errors; diagnostics go to stderr. `--help` prints ordinary help text. Capture paths are returned as `artifacts.current`. Verification writes the current image, diff, history, and report under `.seer/loop/`.
 
 | Status | Exit | Meaning |
 |---|---:|---|
@@ -90,7 +90,7 @@ Each command emits at most one JSON object to stdout; diagnostics go to stderr. 
 | `error` | 2 | A command, permission, dependency, or input failed. |
 | `needs_baseline` | 3 | No approved baseline exists; Seer did not create one. |
 
-The default threshold is 0%. A failed `doctor` still emits its capability report with `status: error`; other failures may leave stdout empty.
+The default threshold is 0%. Every operational error emits one JSON object on stdout and a human-readable diagnostic on stderr. Its common shape is `{"schema_version":1,"operation":"capture","status":"error","error":{"code":"subprocess_failed","message":"..."}}`; `operation` is the recognized subcommand or `null` when none could be identified. `doctor` errors also include the capability report and `frontmost_process`. The `--help` forms are the exception and print ordinary help text. Error codes are `invalid_arguments`, `platform_unsupported`, `dependency_missing`, `subprocess_failed`, `invalid_subprocess_output`, `accessibility_required`, `filesystem_error`, and `not_ready`.
 
 ## Demo
 
@@ -109,7 +109,11 @@ The default threshold is 0%. A failed `doctor` still emits its capability report
 | Record a short app flow | `bash skills/seer/scripts/record_app_window.sh --duration 3` |
 | Summarize a recording | `bash skills/seer/scripts/summarize_video.sh <video.mov> --sheet --gif` |
 
-Use `--help` on the CLI or a subcommand for complete options. `windows` returns a session-scoped native `window_id`; it survives window movement and reordering, but becomes stale when the window closes or is recreated. The 1-based `index` remains informational. `capture --process` remains a compatibility fallback that captures the process's first window. Pillow is required for image comparison and annotation; ffmpeg and ffprobe are optional unless you use video workflows.
+Use `--help` on the CLI or a subcommand for complete options. `windows` returns a session-scoped native `window_id`; it survives window movement and reordering, but becomes stale when the window closes or is recreated. The 1-based `index` remains informational. `capture --process` remains a compatibility fallback that captures the process's first window. Capture validates a fresh temporary PNG with the active `python3` and Pillow before atomically replacing the requested output; a failed capture or validation leaves an existing output file unchanged. Pillow is required for capture validation, image comparison, and annotation; ffmpeg and ffprobe are optional unless you use video workflows.
+
+`doctor` reports the frontmost process separately from the visible-window Accessibility probe: `frontmost_process` is its own field, while the probe result is reported by `capabilities.window_query.authorized`. A false result means Seer could not confirm accessible visible-window access; it does not by itself distinguish a permission denial from the absence of a visible window. Screen Recording permission is checked when capture runs.
+
+Exact-ID capture checks that the window is on-screen before and after capture. This prevents macOS from returning cached pixels for a closed window as a successful new capture. Minimized or hidden windows must be made visible and rediscovered first.
 
 ## Advanced workflows
 
@@ -152,7 +156,11 @@ Set `SEER_OUT_DIR` to change the output root or `SEER_LOOP_DIR` to change only v
 - Empty or black capture: grant Screen Recording permission to the terminal running the agent.
 - Wrong or stale window: rerun `windows --json`, then pass the returned `window_id` to `capture`.
 - Typing fails: grant Accessibility and Automation → System Events permissions.
-- Diff command reports missing Pillow: install it in the `python3` environment used by Seer.
+- Capture or diff reports missing Pillow: install it in the active `python3` environment used by Seer.
+
+## v0.5 validation
+
+The reproducible macOS validation checklist, recorded results, and remaining permission-test gaps are in [v0.5 validation](docs/v0.5-validation.md). CI uses command stubs for deterministic behavior; native window behavior is exercised separately with an opt-in AppKit fixture.
 
 ## Development
 
