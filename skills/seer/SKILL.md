@@ -19,6 +19,14 @@ Use the unified CLI for visual evidence. Keep specialist scripts for recording, 
 
 Never create or replace a baseline without explicit user approval. A missing baseline returns `needs_baseline` (exit 3); after approval, rerun with `--create-baseline`. Treat `--update-baseline` as a destructive approval action.
 
+## Optional MCP interface
+
+When Seer's local MCP server is configured, use `seer_run` with `{"arguments":["capture","--window-id","12345","--json"]}` or another core CLI operation. Use `seer_help` with `{"command":"verify"}` for exact option spelling. Pass each argument as a separate string; shell quoting, expansion, pipes, and abbreviated flags are not supported. The server runs from its configured project root, so relative output paths belong to that project.
+
+`seer_run` returns the CLI JSON unchanged as structured content and text. Read `status` even when MCP `isError` is false: `fail` and `needs_baseline` are completed domain results. `error` sets `isError`. Follow `recovery.next_action` for errors and missing baselines; `retryable` does not authorize state changes or automatic baseline approval. Set a CLI `--timeout` below the server command timeout and the host tool timeout above both.
+
+MCP rejects both baseline-write options. After explicit user approval, perform creation or replacement through the CLI. Recording and typing remain separate scripts; they are not MCP tools. Install the optional dependencies from `scripts/requirements-mcp.txt` into a Python 3.10+ environment, then launch `scripts/seer_mcp.py --project-root /absolute/project`. See [MCP integration](../../docs/mcp-integration.md) for host examples.
+
 ## Semantic inspection
 
 Use `inspect`, `assert`, or a semantic `wait` when the question concerns exposed labels, values, roles, or enabled state. Accessibility is the default source; select `--source ocr` explicitly to inspect text in the window pixels.

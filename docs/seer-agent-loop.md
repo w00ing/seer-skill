@@ -54,3 +54,11 @@ Keep captures, diffs, reports, and run bundles under `.seer/`. Seer does not int
 
 - v0.8: a thin local MCP adapter and evaluated agent workflows.
 - v0.9: installation, compatibility, and release hardening based on actual use.
+
+## Local MCP entry point
+
+The optional v0.8 MCP server exposes `seer_run` and `seer_help` over stdio. It invokes the installed CLI from an explicit project root, without a shell. For example, `seer_run({"arguments":["assert","--window-id","12345","--text","Saved","--json"]})` uses exactly the CLI assertion implementation. Read its `status`, source, confidence, issues, and artifact paths as above. `fail` and `needs_baseline` have MCP `isError: false`; execution errors have `isError: true`. Never infer success from the MCP wrapper alone.
+
+Errors and missing baselines include `recovery: {retryable, next_action}` in both CLI and MCP results. Retryability describes whether a later attempt may help after the suggested action; it grants no permission to modify app state, privacy settings, or a baseline. Baseline creation and replacement are blocked by the adapter and require the approved CLI workflow. The adapter returns local paths, not screenshot bytes; inspect the referenced fresh image with the host's image tool.
+
+Use an explicit CLI timeout below the server's `--command-timeout` (default 60 seconds), and a host tool timeout above the server budget. Cancellation terminates the owned CLI process and unwinds native-worker cleanup. See [MCP setup and host evaluation](mcp-integration.md) and [v0.8 validation](v0.8-validation.md).

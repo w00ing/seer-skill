@@ -30,6 +30,12 @@ Install the `seer` skill from GitHub repository `w00ing/seer-skill` at path `ski
 
 If the marketplace already exists, run `/plugin marketplace update seer` first.
 
+### Optional local MCP
+
+Seer 0.8 adds a stdio MCP adapter for Codex and Claude Code. `seer_run` invokes the same CLI and returns its JSON verdict and local evidence paths; `seer_help` exposes the CLI usage. The optional adapter requires Python 3.10+ and the official MCP SDK. See [MCP setup and evaluated workflows](docs/mcp-integration.md) for isolated installation and host configuration. The CLI remains usable without the SDK.
+
+The adapter cannot create or replace baselines. After explicit user approval, use the CLI for those actions. It does not expose typing, clicking, or a remote server.
+
 ## Try it
 
 Codex:
@@ -180,13 +186,13 @@ Set `SEER_OUT_DIR` to change the output root or `SEER_LOOP_DIR` to change only v
 - Typing fails: grant Accessibility and Automation → System Events permissions.
 - Capture or diff reports missing Pillow: install it in the active `python3` environment used by Seer.
 
-## v0.7 release and validation
+## v0.8 release and validation
 
-The v0.7.0 release and tag are pending publication. Automated and native fixture validation passed within the measured scope, including Accessibility and focused OCR scenarios. Broader app and display coverage remains untested, and Vision confidence does not guarantee exact text. See the [release notes](docs/releases/v0.7.0.md) and [validation record](docs/v0.7-validation.md). The [v0.6 validation page](docs/v0.6-validation.md) is retained as a historical record; the [v0.5 validation record](docs/v0.5-validation.md) documents the earlier release.
+See the [v0.8 release notes](docs/releases/v0.8.0.md) and [validation record](docs/v0.8-validation.md) for MCP integration checks and their limits. No v0.8 GitHub release or tag has been published. Prior native Accessibility and OCR results remain in the [v0.7 validation record](docs/v0.7-validation.md); earlier [v0.6](docs/v0.6-validation.md) and [v0.5](docs/v0.5-validation.md) records are historical.
 
 ## Roadmap
 
-- v0.8: a thin local MCP adapter and evaluated agent workflows.
+- v0.8: local MCP adapter and agent workflow evaluation (implemented; see validation above).
 - v0.9: installation, compatibility, and release hardening based on actual use.
 
 ## Development
@@ -197,6 +203,8 @@ python3 -m venv .local/venv
 .local/venv/bin/python -m unittest discover -s tests -v
 python3 skills/seer/scripts/test_excalidraw.py
 ```
+
+MCP protocol tests additionally require a Python 3.10+ environment with `skills/seer/scripts/requirements-mcp.txt` installed. Run the same unittest command in that environment; CI includes these dependencies. The base Python 3.9 suite skips optional MCP tests.
 
 Shell scripts are checked on macOS CI. Claude packaging can be validated locally with:
 
