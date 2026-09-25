@@ -14,7 +14,7 @@ jobs:
       - uses: actions/checkout@v7
       - run: |
           python3 -m venv .local/venv
-          .local/venv/bin/python -m pip install pillow
+          .local/venv/bin/python -m pip install -r skills/seer/scripts/requirements-mcp.txt
           echo "$PWD/.local/venv/bin" >> "$GITHUB_PATH"
       - run: for script in skills/seer/scripts/*.sh; do bash -n "$script"; done
       - run: |

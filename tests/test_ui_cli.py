@@ -80,6 +80,23 @@ class UICommandTests(unittest.TestCase):
                 self.assertEqual(payload["error"]["code"], "accessibility_required")
                 self.assertEqual(payload["operation"], command[0])
                 self.assertIn("error:", diagnostics)
+                self.assertFalse(payload["recovery"]["retryable"])
+                self.assertIn("user", payload["recovery"]["next_action"])
+
+    def test_timeout_guidance_preserves_error_and_evidence(self):
+        self.reader.side_effect = InspectionError("query_timeout", "UI inspection exceeded its timeout", {"report": "/fixture/query.json"})
+        code, payload, _ = self.invoke("inspect", "--window-id", "42")
+        self.assertEqual(code, 2)
+        self.assertEqual(payload["error"]["code"], "query_timeout")
+        self.assertEqual(payload["details"]["report"], "/fixture/query.json")
+        self.assertTrue(payload["recovery"]["retryable"])
+        self.assertIn("--timeout", payload["recovery"]["next_action"])
+
+    def test_abbreviated_options_are_rejected_before_query(self):
+        code, payload, _ = self.invoke("inspect", "--window-i", "42")
+        self.assertEqual(code, 2)
+        self.assertEqual(payload["error"]["code"], "invalid_arguments")
+        self.reader.assert_not_called()
 
     def test_invalid_conditions_do_not_query_apps(self):
         cases = [

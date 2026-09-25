@@ -34,6 +34,13 @@ def capture_sample(cli, window_id, output, timeout):
                 pass  # The deadline can race with the child's normal exit.
             child.communicate()
             raise TimeoutError("capture exhausted the wait timeout")
+        except BaseException:
+            try:
+                os.killpg(child.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            child.communicate()
+            raise
     try:
         payload = json.loads(stdout)
         if not isinstance(payload, dict):

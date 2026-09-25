@@ -105,6 +105,10 @@ def _run_process(
             "UI inspection exceeded its timeout",
             {"command": str(command[0])},
         ) from exc
+    except BaseException:
+        # Cancellation must also reap workers that own a separate session.
+        _kill_process_group(process)
+        raise
     return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
