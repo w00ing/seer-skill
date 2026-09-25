@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Seer CLI and MCP result envelope, schema version 1",
+  "description": "Validates the common result envelope and selected report/diagnostic fields. It does not validate full operation-specific evidence payloads.",
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": 1 },
+    "operation": {
+      "type": ["string", "null"],
+      "enum": ["doctor", "windows", "capture", "verify", "baseline_create", "inspect", "assert", "wait", "report", "diagnostics", "seer_run", "seer_help", "mcp", null]
+    },
+    "status": { "enum": ["pass", "fail", "error", "needs_baseline"] },
+    "error": { "$ref": "#/$defs/error" },
+    "source_status": { "enum": ["pass", "fail", "error", "needs_baseline"] },
+    "source_operation": { "enum": ["doctor", "windows", "capture", "verify", "baseline_create", "inspect", "assert", "wait", "report", "diagnostics", null] },
+    "artifacts": { "type": "object" },
+    "diagnostics": { "$ref": "#/$defs/diagnostics" },
+    "seer_version": { "type": "string", "minLength": 1 }
+  },
+  "required": ["schema_version", "operation", "status"],
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "error" } }, "required": ["status"] },
+      "then": { "required": ["error"] },
+      "else": { "not": { "required": ["error"] } }
+    },
+    {
+      "if": { "properties": { "operation": { "const": "report" }, "status": { "const": "pass" } }, "required": ["operation", "status"] },
+      "then": {
+        "required": ["source_status", "source_operation", "artifacts"],
+        "properties": {
+          "source_status": { "enum": ["pass", "fail", "error", "needs_baseline"] },
+          "source_operation": { "enum": ["doctor", "windows", "capture", "verify", "baseline_create", "inspect", "assert", "wait", "report", "diagnostics", null] },
+          "artifacts": {
+            "type": "object",
+            "required": ["report"],
+            "properties": {
+              "report": { "type": "string", "minLength": 1 },
+              "export": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "operation": { "const": "diagnostics" }, "status": { "const": "pass" } }, "required": ["operation", "status"] },
+      "then": { "required": ["diagnostics", "seer_version"], "properties": { "diagnostics": { "$ref": "#/$defs/diagnostics" } } }
+    },
+    {
+      "if": { "properties": { "operation": { "enum": ["doctor", "windows", "capture", "inspect", "diagnostics"] } }, "required": ["operation"] },
+      "then": { "properties": { "status": { "enum": ["pass", "error"] } } }
+    },
+    {
+      "if": { "properties": { "operation": { "const": "verify" } }, "required": ["operation"] },
+      "then": { "properties": { "status": { "enum": ["pass", "fail", "error", "needs_baseline"] } } }
+    },
+    {
+      "if": { "properties": { "operation": { "enum": ["assert", "wait"] } }, "required": ["operation"] },
+      "then": { "properties": { "status": { "enum": ["pass", "fail", "error"] } } }
+    },
+    {
+      "if": { "properties": { "operation": { "const": "baseline_create" } }, "required": ["operation"] },
+      "then": { "properties": { "status": { "enum": ["pass", "error"] } } }
+    },
+    {
+      "if": { "properties": { "operation": { "enum": ["report", "diagnostics"] } }, "required": ["operation"] },
+      "then": { "properties": { "status": { "enum": ["pass", "error"] } } }
+    },
+    {
+      "if": { "properties": { "operation": { "enum": ["seer_run", "seer_help", "mcp", null] } }, "required": ["operation"] },
+      "then": { "properties": { "status": { "const": "error" } } }
+    },
+    {
+      "if": { "properties": { "source_status": { "const": "needs_baseline" } }, "required": ["source_status"] },
+      "then": { "properties": { "source_operation": { "const": "verify" } } }
+    },
+    {
+      "if": { "properties": { "source_operation": { "enum": ["doctor", "windows", "capture", "baseline_create", "inspect", "diagnostics"] } }, "required": ["source_operation"] },
+      "then": { "properties": { "source_status": { "enum": ["pass", "error"] } } }
+    },
+    {
+      "if": { "properties": { "source_operation": { "enum": ["assert", "wait"] } }, "required": ["source_operation"] },
+      "then": { "properties": { "source_status": { "enum": ["pass", "fail", "error"] } } }
+    },
+    {
+      "if": { "properties": { "source_operation": { "enum": ["report"] } }, "required": ["source_operation"] },
+      "then": { "properties": { "source_status": { "enum": ["pass", "error"] } } }
+    },
+    {
+      "if": { "properties": { "source_operation": { "type": "null" } }, "required": ["source_operation"] },
+      "then": { "properties": { "source_status": { "const": "error" } } }
+    }
+  ],
+  "$defs": {
+    "error": {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 }
+      },
+      "required": ["code", "message"],
+      "additionalProperties": true
+    },
+    "diagnosticDependency": {
+      "type": "object",
+      "properties": {
+        "available": { "type": "boolean" },
+        "version": { "type": ["string", "null"] }
+      },
+      "required": ["available", "version"],
+      "additionalProperties": true
+    },
+    "diagnosticTool": {
+      "type": "object",
+      "properties": { "available": { "type": "boolean" } },
+      "required": ["available"],
+      "additionalProperties": true
+    },
+    "diagnostics": {
+      "type": "object",
+      "properties": {
+        "platform": {
+          "type": "object",
+          "properties": {
+            "value": { "type": "string", "minLength": 1 },
+            "macos_release": { "type": ["string", "null"] },
+            "architecture": { "type": ["string", "null"] }
+          },
+          "required": ["value", "macos_release", "architecture"],
+          "additionalProperties": true
+        },
+        "python": {
+          "type": "object",
+          "properties": {
+            "version": { "type": "string", "minLength": 1 },
+            "implementation": { "type": "string", "minLength": 1 }
+          },
+          "required": ["version", "implementation"],
+          "additionalProperties": true
+        },
+        "dependencies": {
+          "type": "object",
+          "properties": {
+            "pillow": { "$ref": "#/$defs/diagnosticDependency" },
+            "mcp": { "$ref": "#/$defs/diagnosticDependency" },
+            "jsonschema": { "$ref": "#/$defs/diagnosticDependency" }
+          },
+          "required": ["pillow", "mcp", "jsonschema"],
+          "additionalProperties": true
+        },
+        "tools": {
+          "type": "object",
+          "properties": {
+            "ffmpeg": { "$ref": "#/$defs/diagnosticTool" },
+            "ffprobe": { "$ref": "#/$defs/diagnosticTool" }
+          },
+          "required": ["ffmpeg", "ffprobe"],
+          "additionalProperties": true
+        }
+      },
+      "required": ["platform", "python", "dependencies", "tools"],
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

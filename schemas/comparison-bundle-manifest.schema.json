@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Seer comparison bundle manifest, schema version 1",
+  "description": "Structural contract for the bundle manifest. The consuming command must also verify file presence, hashes, sizes, and role/path consistency.",
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "format": "date-time" },
+    "operation": { "enum": ["verify", "baseline_create"] },
+    "status": { "enum": ["pass", "fail", "error"] },
+    "paths": {
+      "type": "object",
+      "properties": {
+        "baseline": { "$ref": "#/$defs/bundleFileName" },
+        "current": { "$ref": "#/$defs/bundleFileName" },
+        "diff": { "$ref": "#/$defs/bundleFileName" },
+        "report": { "$ref": "#/$defs/bundleFileName" },
+        "baseline_capture_metadata": { "$ref": "#/$defs/bundleFileName" },
+        "current_capture_metadata": { "$ref": "#/$defs/bundleFileName" }
+      },
+      "required": ["baseline", "current", "report"],
+      "additionalProperties": { "$ref": "#/$defs/bundleFileName" }
+    },
+    "files": {
+      "type": "object",
+      "properties": {
+        "baseline": { "$ref": "#/$defs/fileEntry" },
+        "current": { "$ref": "#/$defs/fileEntry" },
+        "diff": { "$ref": "#/$defs/fileEntry" },
+        "report": { "$ref": "#/$defs/fileEntry" },
+        "baseline_capture_metadata": { "$ref": "#/$defs/fileEntry" },
+        "current_capture_metadata": { "$ref": "#/$defs/fileEntry" }
+      },
+      "required": ["baseline", "current", "report"],
+      "additionalProperties": { "$ref": "#/$defs/fileEntry" }
+    },
+    "comparison_options": { "$ref": "#/$defs/comparisonOptions" },
+    "images": {
+      "type": "object",
+      "properties": {
+        "baseline": { "$ref": "#/$defs/imageEntry" },
+        "current": { "$ref": "#/$defs/imageEntry" }
+      },
+      "required": ["baseline", "current"],
+      "additionalProperties": true
+    },
+    "comparison": {
+      "type": "object",
+      "properties": {
+        "status": { "enum": ["pass", "fail", "error"] },
+        "error": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/error" }] },
+        "size_evidence": { "type": ["object", "null"] },
+        "metrics": { "$ref": "#/$defs/metrics" }
+      },
+      "required": ["status", "error", "size_evidence", "metrics"],
+      "additionalProperties": true
+    },
+    "replay": {
+      "type": "object",
+      "properties": {
+        "working_directory": { "const": "." },
+        "command": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "note": { "type": "string" }
+      },
+      "required": ["working_directory", "command", "note"],
+      "additionalProperties": true
+    }
+  },
+  "required": ["schema_version", "run_id", "created_at", "operation", "status", "paths", "files", "comparison_options", "images", "comparison", "replay"],
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "pass" } }, "required": ["status"] },
+      "then": { "properties": { "comparison": { "properties": { "status": { "const": "pass" }, "error": { "type": "null" } } } } }
+    },
+    {
+      "if": { "properties": { "status": { "const": "fail" } }, "required": ["status"] },
+      "then": { "properties": { "comparison": { "properties": { "status": { "const": "fail" }, "error": { "type": "null" } } } } }
+    },
+    {
+      "if": { "properties": { "status": { "const": "error" } }, "required": ["status"] },
+      "then": { "properties": { "comparison": { "properties": { "status": { "const": "error" }, "error": { "$ref": "#/$defs/error" } } } } }
+    }
+  ],
+  "$defs": {
+    "bundleFileName": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "fileEntry": {
+      "type": "object",
+      "properties": {
+        "path": { "$ref": "#/$defs/bundleFileName" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "size_bytes": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["path", "sha256", "size_bytes"],
+      "additionalProperties": true
+    },
+    "comparisonOptions": {
+      "type": "object",
+      "properties": {
+        "resize": { "type": "boolean" },
+        "ignore_rects": { "type": "array", "items": { "type": "string" } },
+        "max_diff_percent": { "type": "number", "minimum": 0, "maximum": 100 }
+      },
+      "required": ["resize", "ignore_rects", "max_diff_percent"],
+      "additionalProperties": true
+    },
+    "size": {
+      "type": "object",
+      "properties": {
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 }
+      },
+      "required": ["width", "height"],
+      "additionalProperties": true
+    },
+    "captureMetadata": {
+      "type": "object",
+      "properties": {
+        "status": { "enum": ["verified", "unknown"] },
+        "captured_at": { "type": ["string", "null"] },
+        "window_id": { "type": ["integer", "null"] },
+        "process": { "type": ["string", "null"] },
+        "size": { "$ref": "#/$defs/size" },
+        "dpi": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "array", "prefixItems": [{ "type": "number", "exclusiveMinimum": 0 }, { "type": "number", "exclusiveMinimum": 0 }], "minItems": 2, "maxItems": 2 }
+          ]
+        },
+        "reason": { "type": ["string", "null"] },
+        "sidecar_path": { "type": ["string", "null"] },
+        "metadata": { "type": ["object", "null"] }
+      },
+      "required": ["status", "captured_at", "window_id", "process", "size", "dpi", "reason", "sidecar_path", "metadata"],
+      "additionalProperties": true
+    },
+    "imageEntry": {
+      "type": "object",
+      "properties": {
+        "path": { "$ref": "#/$defs/bundleFileName" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "source_path": { "type": "string", "minLength": 1 },
+        "size": { "$ref": "#/$defs/size" },
+        "capture_metadata": { "$ref": "#/$defs/captureMetadata" }
+      },
+      "required": ["path", "sha256", "source_path", "size", "capture_metadata"],
+      "additionalProperties": true
+    },
+    "error": {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 },
+        "details": { "type": "object" }
+      },
+      "required": ["code", "message"],
+      "additionalProperties": true
+    },
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "pixels_changed": { "type": "integer", "minimum": 0 },
+        "pixels_total": { "type": "integer", "minimum": 0 },
+        "percent_changed": { "type": "number", "minimum": 0, "maximum": 100 },
+        "avg_diff_percent": { "type": "number", "minimum": 0, "maximum": 100 },
+        "size": { "$ref": "#/$defs/size" },
+        "resized": { "type": "boolean" },
+        "scale_evidence": { "type": "object" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}
