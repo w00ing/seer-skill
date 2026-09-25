@@ -19,6 +19,12 @@ _GUIDANCE = {
     "image_scale_mismatch": (False, "Capture at the baseline scale; use --resize only when explicitly requested."),
     "baseline_approval_required": (False, "Ask the user to approve baseline creation or replacement, then use the CLI with the approved baseline flag. MCP cannot write baselines."),
     "insufficient_evidence": (False, "Inspect the source, issues, and region. Use a supported assertion with sufficient evidence; do not treat this result as success."),
+    "invalid_evidence": (False, "Use a Seer result JSON file or an intact comparison bundle with a supported schema."),
+    "unsupported_schema": (False, "Use a Seer version that supports the result or comparison bundle schema."),
+    "evidence_tampered": (False, "Use the original untouched comparison bundle; Seer will not export files that fail their recorded checksums."),
+    "evidence_too_large": (False, "Summarize without --export or select a bundle within the 128 MiB export limit; preserve the original evidence."),
+    "unsafe_path": (False, "Inspect the bundle manifest and keep declared files inside the bundle using safe relative paths."),
+    "output_exists": (False, "Choose a new output path; Seer preserves existing files."),
 }
 
 

@@ -184,6 +184,39 @@ class MCPStdioTests(unittest.TestCase):
 
         asyncio.run(exercise())
 
+    def test_maintenance_commands_preserve_source_verdict_and_cli_parity(self):
+        from mcp import Client
+
+        source = self.project / "source.json"
+        source.write_text(json.dumps({
+            "schema_version": 1, "operation": "capture", "status": "error",
+            "error": {"code": "subprocess_failed", "message": "fixture unavailable"},
+        }), encoding="utf-8")
+
+        async def exercise():
+            async with Client(self._client_params()) as client:
+                diagnostics = await client.call_tool("seer_run", {"arguments": ["diagnostics"]})
+                expected = json.loads(self._cli_result("diagnostics").stdout)
+                self.assertEqual(diagnostics.structured_content, expected)
+                self.assertFalse(diagnostics.is_error)
+                for command in ("report", "diagnostics"):
+                    help_result = await client.call_tool("seer_help", {"command": command})
+                    self.assertIn(command, help_result.structured_content["help"])
+                result = await client.call_tool("seer_run", {"arguments": [
+                    "report", str(source), "--out", str(self.project / "summary.md"),
+                ]})
+                self.assertFalse(result.is_error)
+                self.assertEqual(result.structured_content["status"], "pass")
+                self.assertEqual(result.structured_content["source_status"], "error")
+                self.assertEqual(json.loads(result.content[0].text), result.structured_content)
+                self.assertIn("error", (self.project / "summary.md").read_text())
+                duplicate = await client.call_tool("seer_run", {"arguments": [
+                    "report", str(source), "--out", str(self.project / "summary.md"),
+                ]})
+                self.assertTrue(duplicate.is_error)
+
+        asyncio.run(exercise())
+
     def test_cli_timeout_and_cancellation_reap_owned_process(self):
         import seer_mcp
         import anyio

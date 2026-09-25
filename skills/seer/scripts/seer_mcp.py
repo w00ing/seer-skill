@@ -21,11 +21,12 @@ from mcp.server.stdio import stdio_server
 from mcp.types import CallToolRequestParams, CallToolResult, ListToolsResult, TextContent, Tool, ToolAnnotations
 
 from result_guidance import error_payload
+from seer_version import SEER_VERSION
 
 
 SCRIPTS = Path(__file__).resolve().parent
 CLI_PATH = SCRIPTS / "seer"
-OPERATIONS = ("doctor", "windows", "capture", "verify", "inspect", "assert", "wait")
+OPERATIONS = ("doctor", "windows", "capture", "verify", "inspect", "assert", "wait", "report", "diagnostics")
 OUTPUT_LIMIT = 8 * 1024 * 1024
 STDERR_LIMIT = 64 * 1024
 TERMINATE_GRACE_SECONDS = 1.0
@@ -342,7 +343,7 @@ def build_server(project_root: Path, timeout: float) -> Server:
             return await _call_seer_help(arguments)
         return _tool_error("mcp", "mcp_unknown_tool", "The requested Seer MCP tool is unavailable.")
 
-    return Server("seer", version="0.8.0", on_list_tools=list_tools, on_call_tool=call_tool)
+    return Server("seer", version=SEER_VERSION, on_list_tools=list_tools, on_call_tool=call_tool)
 
 
 def _positive_finite(value: str) -> float:

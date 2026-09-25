@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 from result_guidance import with_guidance
+from evidence_tools import EvidenceError, create_report as create_evidence_report, diagnostics_payload
 
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -602,6 +603,24 @@ def wait(args):
     return code
 
 
+def report(args):
+    try:
+        details = create_evidence_report(args.input, args.out, args.export)
+    except EvidenceError as exc:
+        return emit_error("report", exc.code, exc.message)
+    except UnicodeError:
+        return emit_error("report", "invalid_evidence", "the evidence contains invalid Unicode text or paths")
+    except (OSError, RuntimeError):
+        return emit_error("report", "filesystem_error", "a report input or output could not be accessed")
+    emit({"schema_version": 1, "operation": "report", "status": "pass", **details})
+    return 0
+
+
+def diagnostics(_: argparse.Namespace):
+    emit(diagnostics_payload())
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
     root = SeerArgumentParser(description="Machine-readable visual verification for macOS agents.")
     commands = root.add_subparsers(dest="command", required=True, parser_class=SeerArgumentParser)
@@ -677,6 +696,17 @@ def parser() -> argparse.ArgumentParser:
     verify_parser.add_argument("--update-baseline", action="store_true", help="Replace an existing baseline")
     verify_parser.add_argument("--json", action="store_true", help="Emit JSON (default)")
     verify_parser.set_defaults(handler=verify)
+
+    report_parser = commands.add_parser("report", help="Create a Markdown summary from a result or comparison bundle")
+    report_parser.add_argument("input", help="Result JSON file or comparison bundle directory")
+    report_parser.add_argument("--out", required=True, help="Markdown summary output path")
+    report_parser.add_argument("--export", help="Explicitly export a verified comparison bundle to ZIP")
+    report_parser.add_argument("--json", action="store_true", help="Emit JSON (default)")
+    report_parser.set_defaults(handler=report)
+
+    diagnostics_parser = commands.add_parser("diagnostics", help="Report privacy-limited runtime and dependency availability")
+    diagnostics_parser.add_argument("--json", action="store_true", help="Emit JSON (default)")
+    diagnostics_parser.set_defaults(handler=diagnostics)
     return root
 
 
@@ -686,7 +716,7 @@ def main() -> int:
     try:
         args = argument_parser.parse_args(argv)
     except CLIUsageError as exc:
-        command_names = {"doctor", "windows", "capture", "verify", "wait", "inspect", "assert"}
+        command_names = {"doctor", "windows", "capture", "verify", "wait", "inspect", "assert", "report", "diagnostics"}
         operation = argv[0] if argv and argv[0] in command_names else None
         sys.stderr.write(exc.parser.format_usage())
         return emit_error(operation, "invalid_arguments", exc.message)
