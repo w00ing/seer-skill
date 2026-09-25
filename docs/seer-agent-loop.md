@@ -53,7 +53,7 @@ Keep captures, diffs, reports, and run bundles under `.seer/`. Seer does not int
 ## Roadmap
 
 - v0.8: a thin local MCP adapter and evaluated agent workflows.
-- v0.9: installation, compatibility, and release hardening based on actual use.
+- v0.9: isolated installation/update evaluation, measured compatibility, JSON contracts, report summaries, explicit evidence export, and minimal diagnostics.
 
 ## Local MCP entry point
 
@@ -62,3 +62,9 @@ The optional v0.8 MCP server exposes `seer_run` and `seer_help` over stdio. It i
 Errors and missing baselines include `recovery: {retryable, next_action}` in both CLI and MCP results. Retryability describes whether a later attempt may help after the suggested action; it grants no permission to modify app state, privacy settings, or a baseline. Baseline creation and replacement are blocked by the adapter and require the approved CLI workflow. The adapter returns local paths, not screenshot bytes; inspect the referenced fresh image with the host's image tool.
 
 Use an explicit CLI timeout below the server's `--command-timeout` (default 60 seconds), and a host tool timeout above the server budget. Cancellation terminates the owned CLI process and unwinds native-worker cleanup. See [MCP setup and host evaluation](mcp-integration.md) and [v0.8 validation](v0.8-validation.md).
+
+## Preserve and hand off results
+
+Use `seer report RESULT_JSON_OR_BUNDLE --out summary.md --json` (or the same arguments through `seer_run`) to turn saved results into Markdown. Report generation has its own status: retain the source verdict when deciding whether the UI passed. Add `--export run.zip` only when evidence export is requested and use a comparison bundle as input. The resulting archive remains local and can contain screenshot text and local metadata.
+
+Use `seer diagnostics --json` for allowlisted environment information without window content or paths. See [evidence retention and sharing](evidence-management.md), [JSON compatibility](json-contract.md), and [v0.9 validation](v0.9-validation.md). Never infer tested host compatibility from protocol compliance alone; Claude Code model-backed use remains unverified.

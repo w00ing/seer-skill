@@ -128,6 +128,8 @@ PNG dimensions and known DPI differences are reported. Seer does not silently re
 | Inspect exposed UI text and controls | `skills/seer/scripts/seer inspect --window-id <id> --source ax --json` |
 | Assert visible text or a control state | `skills/seer/scripts/seer assert --window-id <id> --text "Save" --json` |
 | Verify against a named baseline | `skills/seer/scripts/seer verify <current.png> <name> --json` |
+| Summarize saved verification evidence | `skills/seer/scripts/seer report <result.json-or-bundle> --out <summary.md> --json` |
+| Collect minimal environment diagnostics | `skills/seer/scripts/seer diagnostics --json` |
 | Wait for an exact window to become visually stable | `skills/seer/scripts/seer wait --stable --window-id <id> --timeout 10 --interval 0.25 --stable-for 1 --json` |
 | Record a short app flow | `bash skills/seer/scripts/record_app_window.sh --duration 3` |
 | Summarize a recording | `bash skills/seer/scripts/summarize_video.sh <video.mov> --sheet --gif` |
@@ -178,6 +180,8 @@ See [Visual loop internals](docs/visual-loop.md) for the underlying image metric
 
 Set `SEER_OUT_DIR` to change the output root or `SEER_LOOP_DIR` to change only visual-verification storage. Add `.seer/` to the target project's `.gitignore` unless you intentionally version its baselines.
 
+Use `report` for a Markdown summary and add `--export <archive.zip>` to explicitly export a verified comparison bundle. A generated summary retains the original verdict; generating it does not make a failed verification pass. See [evidence management](docs/evidence-management.md) for exports, retention, cleanup, and privacy-minimal diagnostics, and the [JSON contract](docs/json-contract.md) for schemas and compatibility.
+
 ## Permissions and troubleshooting
 
 - `error: window not found`: start the app, check its process name, and ensure it has a visible window.
@@ -186,14 +190,14 @@ Set `SEER_OUT_DIR` to change the output root or `SEER_LOOP_DIR` to change only v
 - Typing fails: grant Accessibility and Automation → System Events permissions.
 - Capture or diff reports missing Pillow: install it in the active `python3` environment used by Seer.
 
-## v0.8 release and validation
+## v0.9 release and validation
 
-See the [v0.8 release notes](docs/releases/v0.8.0.md) and [validation record](docs/v0.8-validation.md) for MCP integration checks and their limits. No v0.8 GitHub release or tag has been published. Prior native Accessibility and OCR results remain in the [v0.7 validation record](docs/v0.7-validation.md); earlier [v0.6](docs/v0.6-validation.md) and [v0.5](docs/v0.5-validation.md) records are historical.
+See the [v0.9 release notes](docs/releases/v0.9.0.md), [validation record](docs/v0.9-validation.md), and [compatibility matrix](docs/compatibility.md) for measured installation, evaluation, and maintenance coverage. No v0.9 GitHub release or tag has been published. Claude Code model-backed tool use remains unverified. Prior [v0.8 MCP](docs/v0.8-validation.md), [v0.7 Accessibility/OCR](docs/v0.7-validation.md), [v0.6](docs/v0.6-validation.md), and [v0.5](docs/v0.5-validation.md) records retain their original scope.
 
 ## Roadmap
 
 - v0.8: local MCP adapter and agent workflow evaluation (implemented; see validation above).
-- v0.9: installation, compatibility, and release hardening based on actual use.
+- v0.9: isolated installation/update evaluation, compatibility contracts, summaries, evidence export, and diagnostics (implemented; see validation above).
 
 ## Development
 

@@ -25,7 +25,7 @@ When Seer's local MCP server is configured, use `seer_run` with `{"arguments":["
 
 `seer_run` returns the CLI JSON unchanged as structured content and text. Read `status` even when MCP `isError` is false: `fail` and `needs_baseline` are completed domain results. `error` sets `isError`. Follow `recovery.next_action` for errors and missing baselines; `retryable` does not authorize state changes or automatic baseline approval. Set a CLI `--timeout` below the server command timeout and the host tool timeout above both.
 
-MCP rejects both baseline-write options. After explicit user approval, perform creation or replacement through the CLI. Recording and typing remain separate scripts; they are not MCP tools. Install the optional dependencies from `scripts/requirements-mcp.txt` into a Python 3.10+ environment, then launch `scripts/seer_mcp.py --project-root /absolute/project`. See [MCP integration](../../docs/mcp-integration.md) for host examples.
+MCP rejects both baseline-write options. After explicit user approval, perform creation or replacement through the CLI. Recording and typing remain separate scripts; they are not MCP tools. Install the optional dependencies from `scripts/requirements-mcp.txt` into a Python 3.10+ environment, then launch `scripts/seer_mcp.py --project-root /absolute/project`. See [MCP integration](https://github.com/w00ing/seer-skill/blob/main/docs/mcp-integration.md) for host examples.
 
 ## Semantic inspection
 
@@ -49,7 +49,7 @@ Queries never fall back between Accessibility and OCR. `--region X,Y,WIDTH,HEIGH
 
 An `inspect` result with exit 0 means the read completed; check `complete` and `issues` before using its evidence. `assert` and semantic `wait` turn incomplete observations into errors. Named static text and unknown roles cannot establish a control's enabled state. Inspection reports are saved locally; save assertion/wait stdout to preserve the verdict. Semantic verdicts do not use visual comparison replay. Vision can misread text even at confidence 1.0; inspect recognized text before relying on it.
 
-Treat missing evidence as error, never as proof of absence. Empty or incomplete Accessibility text is insufficient; complete-tree absence applies only to the app's exposed Accessibility tree. OCR can establish a positive text match above `--min-confidence`, but low-confidence evidence is insufficient. OCR cannot prove text absence and cannot check control state. A valid mismatch returns exit 1, operational or insufficient-evidence errors return exit 2, and a wait whose valid condition remains unmet at its deadline returns a timeout failure. Inspect the returned source/confidence evidence. The [agent workflow](../../docs/seer-agent-loop.md) describes these evidence limits and Apple API boundaries.
+Treat missing evidence as error, never as proof of absence. Empty or incomplete Accessibility text is insufficient; complete-tree absence applies only to the app's exposed Accessibility tree. OCR can establish a positive text match above `--min-confidence`, but low-confidence evidence is insufficient. OCR cannot prove text absence and cannot check control state. A valid mismatch returns exit 1, operational or insufficient-evidence errors return exit 2, and a wait whose valid condition remains unmet at its deadline returns a timeout failure. Inspect the returned source/confidence evidence. The [agent workflow](https://github.com/w00ing/seer-skill/blob/main/docs/seer-agent-loop.md) describes these evidence limits and Apple API boundaries.
 
 ## CLI interface
 
@@ -90,6 +90,10 @@ Set `SEER_OUT_DIR` to change `.seer/` output or `SEER_LOOP_DIR` to change only b
 
 ## Optional workflows
 
+- Summarize saved evidence: `python3 scripts/seer report RESULT_JSON_OR_BUNDLE --out .seer/reports/summary.md --json`. Read the original verdict in the returned result and summary; success of report generation does not establish a passing UI.
+- Export a comparison bundle only when requested: add `--export .seer/exports/run.zip` to the report command with a bundle-directory input. Outputs must be new paths. The archive includes raw evidence and local metadata; inspect it before sharing. No upload is performed.
+- Collect minimal diagnostics: `python3 scripts/seer diagnostics --json`. This reports only allowlisted environment/dependency information and does not query windows or privacy permissions. Do not substitute it for `doctor` when testing capture readiness.
+
 - Record a window: `bash scripts/record_app_window.sh --duration 3 --summary --summary-sheet --summary-gif`
 - Record a display or region: `bash scripts/record_screen.sh --help`
 - Summarize video: `bash scripts/summarize_video.sh <video.mov> --mode scene --sheet --gif`
@@ -99,6 +103,8 @@ Set `SEER_OUT_DIR` to change `.seer/` output or `SEER_LOOP_DIR` to change only b
 - Type into an app: inspect `bash scripts/type_into_app.sh --help`, then invoke only after explicit approval because it changes app state.
 
 Use `--help` on specialist scripts for their complete options. Pillow is required for capture validation, image diff, and annotation; ffmpeg and ffprobe are optional for video workflows.
+
+Preserve complete `loop/runs/<run-id>/` bundles for replay and approved `loop/baselines/` for future comparisons. Seer never cleans evidence automatically. Review selected old capture/record/history/run directories before deleting them; do not erase `.seer/` wholesale. The repository's [evidence-management guide](https://github.com/w00ing/seer-skill/blob/main/docs/evidence-management.md), [JSON contract](https://github.com/w00ing/seer-skill/blob/main/docs/json-contract.md), and [measured compatibility matrix](https://github.com/w00ing/seer-skill/blob/main/docs/compatibility.md) describe the maintenance boundaries. Claude Code model-backed tool use remains unverified; do not infer it from passing Codex or MCP tests.
 
 ## Resources
 

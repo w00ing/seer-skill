@@ -72,3 +72,9 @@ See [v0.7 validation](v0.7-validation.md) for check results and remaining limits
 Seer 0.8's local adapter calls `seer verify` and forwards its JSON verdict and artifact paths unchanged in MCP structured content and text. It does not recompute metrics, infer ignored regions, approve a baseline, or resize implicitly. A valid `fail` or `needs_baseline` is a completed tool result; check `status` rather than relying on MCP `isError`. Both baseline-write flags are rejected by MCP. Use the CLI only after explicit approval.
 
 Operational errors and missing baselines add `recovery.next_action` and `recovery.retryable` at the unified CLI boundary, so CLI and MCP callers receive the same guidance. Stored comparison bundles retain their existing schema. See [MCP integration](mcp-integration.md) for installation and [v0.8 validation](v0.8-validation.md) for protocol and workflow evidence.
+
+## Summaries and exports
+
+`seer report <bundle-directory> --out summary.md --json` checks the stored bundle and writes a Markdown summary of its verdict and evidence. Add `--export run.zip` to explicitly create a local archive containing the manifest and verified declared files. Existing output files are not replaced. The source bundle and baseline are unchanged; report generation does not perform a new comparison or convert a failed verdict into a pass.
+
+You can also summarize saved CLI JSON, including semantic verdicts, without following its artifact paths. ZIP export requires a comparison bundle directory. See [evidence management](evidence-management.md) for retention, privacy, and diagnostics, and [JSON contracts](json-contract.md) for schema boundaries.
