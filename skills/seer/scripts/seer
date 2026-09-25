@@ -621,7 +621,7 @@ def parser() -> argparse.ArgumentParser:
         command.add_argument("--source", choices=("ax", "ocr"), default="ax", help="Accessibility (default) or explicit local Vision OCR")
         command.add_argument("--region", type=parse_region, metavar="X,Y,W,H", help="Window-local points, top-left origin")
         if timeout:
-            command.add_argument("--timeout", type=positive_seconds, default=10.0, help="Overall query budget, including first helper build")
+            command.add_argument("--timeout", type=positive_seconds, default=30.0, help="Overall query budget, including helper build and OCR (default: 30 seconds)")
 
     def add_conditions(command, *, stable=False):
         conditions = command.add_mutually_exclusive_group(required=True)

@@ -13,8 +13,10 @@ not inspect other apps' content, request permissions, or create baselines. It
 is intentionally not part of CI.
 """
 
+import argparse
 import hashlib
 import json
+import math
 import platform
 import select
 import subprocess
@@ -223,7 +225,10 @@ def verify_fields(element, *, expected_role, label):
         raise AssertionError(f"{label}: enabled field is missing or invalid: {element}")
 
 
-def assert_result(report, label, window_id, source, condition, *, expected_code, status="pass"):
+def assert_result(
+    report, label, window_id, source, condition, *, expected_code,
+    status="pass", process_timeout=30,
+):
     result, data = cli(
         report,
         label,
@@ -231,7 +236,7 @@ def assert_result(report, label, window_id, source, condition, *, expected_code,
         "--window-id", window_id,
         "--source", source,
         *condition,
-        timeout=30,
+        timeout=process_timeout,
     )
     ensure_operation(result, data, code=expected_code, status=status, label=label)
     report["scenarios"][label] = {
@@ -276,7 +281,171 @@ def record(report, name, details):
     print(f"PASS {name}", flush=True)
 
 
+def positive_finite_seconds(value):
+    try:
+        number = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("OCR timeout must be a positive finite number of seconds") from exc
+    if not math.isfinite(number) or number <= 0:
+        raise argparse.ArgumentTypeError("OCR timeout must be a positive finite number of seconds")
+    return number
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Run manual Seer v0.7 native UI QA")
+    parser.add_argument(
+        "--only-ocr",
+        action="store_true",
+        help="run a fresh capture, OCR checks, and stale-window check without repeating AX/wait checks",
+    )
+    parser.add_argument(
+        "--ocr-timeout",
+        type=positive_finite_seconds,
+        default=30.0,
+        metavar="SECONDS",
+        help="per-command OCR operation timeout (default: 30 seconds)",
+    )
+    return parser.parse_args()
+
+
+def run_ocr_scenarios(report, window, window_id, ocr_timeout):
+    timeout_value = format(ocr_timeout, ".15g")
+    process_timeout = ocr_timeout + 20
+
+    try:
+        ocr_result, ocr_data = cli(
+            report, "ocr_inspect", "inspect", "--window-id", window_id,
+            "--source", "ocr", "--timeout", timeout_value, timeout=process_timeout,
+        )
+        ensure_operation(ocr_result, ocr_data, code=0, status="pass", label="OCR inspect")
+        ocr_records = list(walk_records(ocr_data))
+        canvas = find_record(ocr_records, "Canvas Evidence")
+        confidence = canvas.get("confidence", canvas.get("score"))
+        if not isinstance(confidence, (float, int)) or confidence < 0.8:
+            raise AssertionError(f"canvas OCR confidence must be at least 0.8: {canvas}")
+        record(report, "OCR finds custom-drawn canvas text with confidence", {
+            "element": canvas, "confidence_threshold": 0.8,
+        })
+
+        assert_result(
+            report, "OCR text present passes", window_id, "ocr",
+            ["--text", "Canvas Evidence", "--match", "exact", "--min-confidence", "0.8",
+             "--timeout", timeout_value],
+            expected_code=0, process_timeout=process_timeout,
+        )
+        wait_result, wait_data = cli(
+            report, "ocr_text_wait", "wait", "--window-id", window_id,
+            "--source", "ocr", "--text", "Canvas Evidence", "--match", "exact",
+            "--timeout", timeout_value, "--interval", "0.25", timeout=process_timeout,
+        )
+        ensure_operation(wait_result, wait_data, code=0, status="pass", label="OCR text wait")
+        record(report, "OCR semantic wait finds custom-drawn text", {"result": wait_data})
+
+        _, absent_data = assert_result(
+            report, "OCR absent unknown text is insufficient evidence", window_id, "ocr",
+            ["--text-absent", "No Such Canvas Text 837", "--match", "exact",
+             "--min-confidence", "0.8", "--timeout", timeout_value],
+            expected_code=2, status="error", process_timeout=process_timeout,
+        )
+        if error_code(absent_data) != "insufficient_evidence":
+            raise AssertionError(f"OCR absence must be insufficient evidence: {absent_data}")
+        assert_result(
+            report, "OCR absence fails for recognized high confidence text", window_id, "ocr",
+            ["--text-absent", "Canvas Evidence", "--match", "exact",
+             "--min-confidence", "0.8", "--timeout", timeout_value],
+            expected_code=1, status="fail", process_timeout=process_timeout,
+        )
+    except PermissionUnavailable as exc:
+        report["limits"].append(f"OCR checks were blocked by OS permission: {exc}")
+
+    if "OCR text present passes" not in report["scenarios"]:
+        return
+
+    # OCR region bounds remain in window-local points after cropping. Derive
+    # this crop from the recognized text rectangle to check the mapping.
+    canvas_x, canvas_y, canvas_width, canvas_height = rectangle(canvas.get("bounds"))
+    _, _, window_width, window_height = rectangle(window["bounds"])
+    crop_x = max(0.0, canvas_x - 8.0)
+    crop_y = max(0.0, canvas_y - 8.0)
+    crop_right = min(window_width, canvas_x + canvas_width + 8.0)
+    crop_bottom = min(window_height, canvas_y + canvas_height + 8.0)
+    canvas_region = (
+        f"{crop_x:.2f},{crop_y:.2f},"
+        f"{crop_right - crop_x:.2f},{crop_bottom - crop_y:.2f}"
+    )
+    crop_result, crop_data = cli(
+        report, "ocr_text_region_crop", "inspect", "--window-id", window_id,
+        "--source", "ocr", "--region", canvas_region, "--timeout", timeout_value,
+        timeout=process_timeout,
+    )
+    ensure_operation(crop_result, crop_data, code=0, status="pass", label="OCR text region")
+    crop_canvas = find_record(list(walk_records(crop_data)), "Canvas Evidence")
+    crop_confidence = crop_canvas.get("confidence")
+    if not isinstance(crop_confidence, (float, int)) or crop_confidence < 0.8:
+        raise AssertionError(f"cropped canvas OCR confidence must be at least 0.8: {crop_canvas}")
+    crop_artifact = crop_data.get("artifacts", {}).get("crop")
+    if not crop_artifact or not Path(crop_artifact).is_file():
+        raise AssertionError(f"OCR region did not publish its crop image: {crop_data}")
+    cx, cy, cw, ch = rectangle(crop_canvas.get("bounds"))
+    if not (crop_x <= cx + cw / 2 < crop_right and crop_y <= cy + ch / 2 < crop_bottom):
+        raise AssertionError(f"cropped OCR bounds were not mapped to window points: {crop_canvas}")
+    record(report, "OCR region crop preserves window-local point bounds", {
+        "region": canvas_region,
+        "crop_artifact": crop_artifact,
+        "element": crop_canvas,
+        "confidence_threshold": 0.8,
+    })
+
+    # An empty crop has no OCR observations. A nonempty absence query over it
+    # must return insufficient evidence instead of a false pass.
+    blank_x = min(max(0.0, canvas_x + canvas_width + 12.0), window_width - 36.0)
+    blank_y = min(max(0.0, canvas_y + canvas_height / 2 - 10.0), window_height - 24.0)
+    blank_region = f"{blank_x:.2f},{blank_y:.2f},32,20"
+    blank_result, blank_data = cli(
+        report, "ocr_blank_region_absence", "assert", "--window-id", window_id,
+        "--source", "ocr", "--region", blank_region,
+        "--text-absent", "No Text In Blank Crop 837", "--match", "exact",
+        "--min-confidence", "0.8", "--timeout", timeout_value,
+        timeout=process_timeout,
+    )
+    ensure_operation(blank_result, blank_data, code=2, status="error",
+                     label="blank OCR region absence")
+    if error_code(blank_data) != "insufficient_evidence":
+        raise AssertionError(f"blank OCR crop must be insufficient evidence: {blank_data}")
+    record(report, "blank OCR region absence returns insufficient evidence", {
+        "region": blank_region, "result": blank_data,
+    })
+
+    # An exact query shorter than the recognized phrase still cannot prove
+    # that the text is absent.
+    partial_result, partial_data = cli(
+        report, "ocr_partial_query", "assert", "--window-id", window_id,
+        "--source", "ocr", "--text-absent", "Canvas", "--match", "exact",
+        "--min-confidence", "0.8", "--timeout", timeout_value,
+        timeout=process_timeout,
+    )
+    ensure_operation(partial_result, partial_data, code=2, status="error",
+                     label="exact nonmatching OCR absence query")
+    if error_code(partial_data) != "insufficient_evidence":
+        raise AssertionError(f"OCR absence should be insufficient evidence: {partial_data}")
+    record(report, "exact nonmatching OCR absence query returns insufficient evidence", {
+        "result": partial_data,
+    })
+
+
+def check_stale_closed_window(report, command, window_id):
+    command("v07-close")
+    stale_result, stale_data = cli(
+        report, "stale_closed_window", "inspect", "--window-id", window_id,
+        "--source", "ax", "--timeout", "15", timeout=30,
+    )
+    ensure_operation(stale_result, stale_data, code=2, status="error",
+                     label="closed stale window")
+    record(report, "closed window ID returns an operational error", {"result": stale_data})
+
+
 def main():
+    args = parse_args()
     QA.mkdir(parents=True, exist_ok=True)
     output = Path(tempfile.mkdtemp(prefix="v07-", dir=QA))
     swift_version = subprocess.run(
@@ -295,6 +464,8 @@ def main():
             ).hexdigest(),
         },
         "output_directory": str(output),
+        "run_mode": "ocr_only" if args.only_ocr else "full",
+        "ocr_timeout_seconds": args.ocr_timeout,
         "fixture_commands": [
             "v07-start", "v07-loading", "v07-ready-delayed", "v07-close", "quit"
         ],
@@ -367,6 +538,22 @@ def main():
         except PermissionUnavailable as exc:
             report["limits"].append(f"fixture PNG capture was blocked by OS permission: {exc}")
             report["preview_png"] = None
+
+        if args.only_ocr:
+            ocr_failure = None
+            try:
+                run_ocr_scenarios(report, window, window_id, args.ocr_timeout)
+            except Exception as exc:
+                ocr_failure = exc
+            try:
+                check_stale_closed_window(report, command, window_id)
+            except Exception as exc:
+                if ocr_failure is None:
+                    ocr_failure = exc
+            if ocr_failure is not None:
+                raise ocr_failure
+            report["status"] = "partial" if report["limits"] else "pass"
+            return 0 if report["status"] == "pass" else 2
 
         # First inspect may need to compile the native helper, so give it a
         # longer operation budget than later checks.
@@ -484,115 +671,8 @@ def main():
             raise AssertionError(f"valid nonmatch should fail by timeout: {timeout_data}")
         record(report, "valid nonmatching text wait times out", {"result": timeout_data})
 
-        try:
-            ocr_result, ocr_data = cli(
-                report, "ocr_inspect", "inspect", "--window-id", window_id,
-                "--source", "ocr", "--timeout", "15", timeout=30,
-            )
-            ensure_operation(ocr_result, ocr_data, code=0, status="pass", label="OCR inspect")
-            ocr_records = list(walk_records(ocr_data))
-            canvas = find_record(ocr_records, "Canvas Evidence")
-            confidence = canvas.get("confidence", canvas.get("score"))
-            if not isinstance(confidence, (float, int)) or confidence < 0.8:
-                raise AssertionError(f"canvas OCR confidence must be at least 0.8: {canvas}")
-            record(report, "OCR finds custom-drawn canvas text with confidence", {
-                "element": canvas, "confidence_threshold": 0.8,
-            })
-
-            assert_result(report, "OCR text present passes", window_id, "ocr",
-                          ["--text", "Canvas Evidence", "--match", "exact", "--min-confidence", "0.8"],
-                          expected_code=0)
-            _, absent_data = assert_result(
-                report, "OCR absent unknown text is insufficient evidence", window_id, "ocr",
-                ["--text-absent", "No Such Canvas Text 837", "--match", "exact",
-                 "--min-confidence", "0.8"], expected_code=2, status="error",
-            )
-            if error_code(absent_data) != "insufficient_evidence":
-                raise AssertionError(f"OCR absence must be insufficient evidence: {absent_data}")
-            assert_result(report, "OCR absence fails for recognized high confidence text", window_id, "ocr",
-                          ["--text-absent", "Canvas Evidence", "--match", "exact",
-                           "--min-confidence", "0.8"], expected_code=1, status="fail")
-        except PermissionUnavailable as exc:
-            report["limits"].append(f"OCR checks were blocked by OS permission: {exc}")
-
-        if "OCR text present passes" in report["scenarios"]:
-            # OCR region bounds remain in window-local points after cropping.
-            # Derive this crop from the recognized text rectangle so the test
-            # checks the crop-to-window coordinate mapping on real evidence.
-            canvas_x, canvas_y, canvas_width, canvas_height = rectangle(canvas.get("bounds"))
-            _, _, window_width, window_height = rectangle(window["bounds"])
-            crop_x = max(0.0, canvas_x - 8.0)
-            crop_y = max(0.0, canvas_y - 8.0)
-            crop_right = min(window_width, canvas_x + canvas_width + 8.0)
-            crop_bottom = min(window_height, canvas_y + canvas_height + 8.0)
-            canvas_region = (
-                f"{crop_x:.2f},{crop_y:.2f},"
-                f"{crop_right - crop_x:.2f},{crop_bottom - crop_y:.2f}"
-            )
-            crop_result, crop_data = cli(
-                report, "ocr_text_region_crop", "inspect", "--window-id", window_id,
-                "--source", "ocr", "--region", canvas_region, "--timeout", "15", timeout=30,
-            )
-            ensure_operation(crop_result, crop_data, code=0, status="pass", label="OCR text region")
-            crop_canvas = find_record(list(walk_records(crop_data)), "Canvas Evidence")
-            crop_confidence = crop_canvas.get("confidence")
-            if not isinstance(crop_confidence, (float, int)) or crop_confidence < 0.8:
-                raise AssertionError(f"cropped canvas OCR confidence must be at least 0.8: {crop_canvas}")
-            crop_artifact = crop_data.get("artifacts", {}).get("crop")
-            if not crop_artifact or not Path(crop_artifact).is_file():
-                raise AssertionError(f"OCR region did not publish its crop image: {crop_data}")
-            cx, cy, cw, ch = rectangle(crop_canvas.get("bounds"))
-            if not (crop_x <= cx + cw / 2 < crop_right and crop_y <= cy + ch / 2 < crop_bottom):
-                raise AssertionError(f"cropped OCR bounds were not mapped to window points: {crop_canvas}")
-            record(report, "OCR region crop preserves window-local point bounds", {
-                "region": canvas_region,
-                "crop_artifact": crop_artifact,
-                "element": crop_canvas,
-                "confidence_threshold": 0.8,
-            })
-
-            # An empty crop has no OCR observations. A nonempty absence query
-            # over it must return insufficient evidence instead of a false pass.
-            blank_x = min(max(0.0, canvas_x + canvas_width + 12.0), window_width - 36.0)
-            blank_y = min(max(0.0, canvas_y + canvas_height / 2 - 10.0), window_height - 24.0)
-            blank_region = f"{blank_x:.2f},{blank_y:.2f},32,20"
-            blank_result, blank_data = cli(
-                report, "ocr_blank_region_absence", "assert", "--window-id", window_id,
-                "--source", "ocr", "--region", blank_region,
-                "--text-absent", "No Text In Blank Crop 837", "--match", "exact",
-                "--min-confidence", "0.8", timeout=30,
-            )
-            ensure_operation(blank_result, blank_data, code=2, status="error",
-                             label="blank OCR region absence")
-            if error_code(blank_data) != "insufficient_evidence":
-                raise AssertionError(f"blank OCR crop must be insufficient evidence: {blank_data}")
-            record(report, "blank OCR region absence returns insufficient evidence", {
-                "region": blank_region, "result": blank_data,
-            })
-
-            # This valid exact query does not match the complete recognized
-            # phrase. OCR still cannot use that observation to prove absence.
-            partial_result, partial_data = cli(
-                report, "ocr_partial_query", "assert", "--window-id", window_id,
-                "--source", "ocr", "--text-absent", "Canvas", "--match", "exact",
-                "--min-confidence", "0.8", timeout=30,
-            )
-            ensure_operation(partial_result, partial_data, code=2, status="error",
-                             label="exact nonmatching OCR absence query")
-            if error_code(partial_data) != "insufficient_evidence":
-                raise AssertionError(f"OCR absence should be insufficient evidence: {partial_data}")
-            record(report, "exact nonmatching OCR absence query returns insufficient evidence", {
-                "result": partial_data,
-            })
-
-        command("v07-close")
-        stale_result, stale_data = cli(
-            report, "stale_closed_window", "inspect", "--window-id", window_id,
-            "--source", "ax", "--timeout", "15", timeout=30,
-        )
-        ensure_operation(stale_result, stale_data, code=2, status="error",
-                         label="closed stale window")
-        record(report, "closed window ID returns an operational error", {"result": stale_data})
+        run_ocr_scenarios(report, window, window_id, args.ocr_timeout)
+        check_stale_closed_window(report, command, window_id)
 
         if report["limits"]:
             report["status"] = "partial"

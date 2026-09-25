@@ -55,6 +55,12 @@ class UICommandTests(unittest.TestCase):
         self.assertEqual(payload["operation"], "inspect")
         self.reader.assert_called_once_with(42, source="ax", region=(1, 2, 30, 40), timeout=2)
 
+    def test_inspection_default_allows_native_ocr_startup(self):
+        for arguments in (("inspect",), ("assert", "--text", "Ready")):
+            with self.subTest(arguments=arguments):
+                self.invoke(*arguments, "--window-id", "42")
+                self.assertEqual(self.reader.call_args.kwargs["timeout"], 30)
+
     def test_assert_exit_codes_follow_evidence(self):
         for condition, expected in ((["--text", "Ready"], 0), (["--text", "Missing"], 1),
                                     (["--text-absent", "Missing"], 0),

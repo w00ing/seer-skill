@@ -668,7 +668,7 @@ def inspect_ui(
     *,
     source: str = "ax",
     region: tuple[float, float, float, float] | None = None,
-    timeout: float = 10.0,
+    timeout: float = 30.0,
 ) -> dict[str, Any]:
     """Retrieve accessibility or OCR observations from one exact visible window."""
     started = time.monotonic()
