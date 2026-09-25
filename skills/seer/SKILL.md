@@ -28,16 +28,18 @@ python3 scripts/seer inspect --window-id 12345 --source ax --json
 python3 scripts/seer assert --window-id 12345 --text "Saved" --match exact --json
 python3 scripts/seer assert --window-id 12345 --enabled "Save" --role AXButton --json
 python3 scripts/seer assert --window-id 12345 --source ocr --text "Saved" \
-  --min-confidence 0.8 --json
+  --min-confidence 0.8 --timeout 60 --json
 python3 scripts/seer wait --text "Ready" --window-id 12345 \
   --timeout 10 --interval 0.25 --json
 ```
+
+`inspect` and `assert` allow 30 seconds by default; semantic `wait` allows 10. The query budget includes helper compilation, capture, and OCR work. Use a longer timeout such as `--timeout 60` for OCR or a cold helper build.
 
 `inspect` returns Accessibility role, name, value, bounds, and enabled state; its OCR source returns recognized text with confidence and bounds. `assert` supports `--text`, `--text-absent`, `--enabled`, and `--disabled`. Text checks compare case-sensitively against individual Accessibility name/value fields. `--match` defaults to `contains` and also accepts `exact`; control names match exactly. Use `--role` to restrict an enabled/disabled query to that exact Accessibility role. Semantic `wait` accepts one of those conditions or the existing `--stable` pixel condition.
 
 Queries never fall back between Accessibility and OCR. `--region X,Y,WIDTH,HEIGHT` uses window-local points from the top-left. Accessibility selects elements whose bounds centers are in the region; OCR crops the corresponding image region and translates its recognized bounds back to window coordinates. Visual `--ignore-rect` options remain measured in baseline PNG pixels.
 
-An `inspect` result with exit 0 means the read completed; check `complete` and `issues` before using its evidence. `assert` and semantic `wait` turn incomplete observations into errors. Named static text and unknown roles cannot establish a control's enabled state. Inspection reports are saved locally; save assertion/wait stdout to preserve the verdict. Semantic verdicts do not use visual comparison replay.
+An `inspect` result with exit 0 means the read completed; check `complete` and `issues` before using its evidence. `assert` and semantic `wait` turn incomplete observations into errors. Named static text and unknown roles cannot establish a control's enabled state. Inspection reports are saved locally; save assertion/wait stdout to preserve the verdict. Semantic verdicts do not use visual comparison replay. Vision can misread text even at confidence 1.0; inspect recognized text before relying on it.
 
 Treat missing evidence as error, never as proof of absence. Empty or incomplete Accessibility text is insufficient; complete-tree absence applies only to the app's exposed Accessibility tree. OCR can establish a positive text match above `--min-confidence`, but low-confidence evidence is insufficient. OCR cannot prove text absence and cannot check control state. A valid mismatch returns exit 1, operational or insufficient-evidence errors return exit 2, and a wait whose valid condition remains unmet at its deadline returns a timeout failure. Inspect the returned source/confidence evidence. The [agent workflow](../../docs/seer-agent-loop.md) describes these evidence limits and Apple API boundaries.
 

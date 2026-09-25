@@ -134,7 +134,7 @@ Exact-ID capture checks that the window is on-screen before and after capture. T
 
 ### Semantic inspection
 
-Seer 0.7 adds explicit Accessibility-tree queries and optional macOS Vision OCR. `inspect`, `assert`, and the semantic forms of `wait` default to Accessibility; OCR runs only with `--source ocr`. Semantic queries may need `swiftc` from Xcode Command Line Tools on first use. They do not change the visual capture or baseline workflow. See the [agent workflow](docs/seer-agent-loop.md) for command examples, evidence limits, and coordinate rules.
+Seer 0.7 adds explicit Accessibility-tree queries and optional macOS Vision OCR. `inspect` and `assert` allow 30 seconds by default; semantic `wait` allows 10 seconds. Use `--source ocr` to opt in, and allow a longer budget such as `--timeout 60` for OCR or a cold helper build. Vision confidence is evidence strength, not a guarantee that recognized text is exact. See the [agent workflow](docs/seer-agent-loop.md) for examples and evidence limits.
 
 ## Advanced workflows
 
@@ -182,7 +182,7 @@ Set `SEER_OUT_DIR` to change the output root or `SEER_LOOP_DIR` to change only v
 
 ## v0.7 release and validation
 
-The v0.7.0 release and tag are pending publication. Automated checks pass; live window validation is still pending. See the [release notes](docs/releases/v0.7.0.md) and [validation status](docs/v0.7-validation.md). The [v0.6 validation page](docs/v0.6-validation.md) is retained as a historical record; the [v0.5 validation record](docs/v0.5-validation.md) documents the earlier release.
+The v0.7.0 release and tag are pending publication. Automated and native fixture validation passed within the measured scope, including Accessibility and focused OCR scenarios. Broader app and display coverage remains untested, and Vision confidence does not guarantee exact text. See the [release notes](docs/releases/v0.7.0.md) and [validation record](docs/v0.7-validation.md). The [v0.6 validation page](docs/v0.6-validation.md) is retained as a historical record; the [v0.5 validation record](docs/v0.5-validation.md) documents the earlier release.
 
 ## Roadmap
 

@@ -65,4 +65,4 @@ Accessibility is the default and reports exposed roles, names, values, bounds, a
 
 The unified CLI returns `pass` with exit 0 when the comparison is within threshold, `fail` with exit 1 when it exceeds the threshold or stability times out, `error` with exit 2 for an operational failure, and `needs_baseline` with exit 3 when the named baseline is absent. Operational errors produce one JSON object on stdout with `schema_version: 1`, `operation` (recognized subcommand or `null`), `status: "error"`, and `error: {code, message}`; diagnostics go to stderr. Doctor errors also carry the capability report and `frontmost_process`. The `--help` forms print ordinary help text.
 
-See [v0.7 validation](v0.7-validation.md) for the pending check status. The [v0.6 validation page](v0.6-validation.md) is a historical record, and the [v0.5 validation record](v0.5-validation.md) documents the earlier release.
+See [v0.7 validation](v0.7-validation.md) for check results and remaining limits. The [v0.6 validation page](v0.6-validation.md) is a historical record, and the [v0.5 validation record](v0.5-validation.md) documents the earlier release.
