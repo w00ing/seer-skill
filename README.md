@@ -192,7 +192,7 @@ Use `report` for a Markdown summary and add `--export <archive.zip>` to explicit
 
 ## v0.9 release and validation
 
-See the [v0.9 release notes](docs/releases/v0.9.0.md), [validation record](docs/v0.9-validation.md), and [compatibility matrix](docs/compatibility.md) for measured installation, evaluation, and maintenance coverage. No v0.9 GitHub release or tag has been published. Claude Code model-backed tool use remains unverified. Prior [v0.8 MCP](docs/v0.8-validation.md), [v0.7 Accessibility/OCR](docs/v0.7-validation.md), [v0.6](docs/v0.6-validation.md), and [v0.5](docs/v0.5-validation.md) records retain their original scope.
+See the [v0.9 release notes](docs/releases/v0.9.0.md), [validation record](docs/v0.9-validation.md), and [compatibility matrix](docs/compatibility.md) for measured installation, evaluation, and maintenance coverage. No v0.9 GitHub release or tag has been published. Claude Code 2.1.283 passed the [representative MCP comparison task](docs/v0.9-validation.md#claude-code-host-follow-up), including baseline preservation. Prior [v0.8 MCP](docs/v0.8-validation.md), [v0.7 Accessibility/OCR](docs/v0.7-validation.md), [v0.6](docs/v0.6-validation.md), and [v0.5](docs/v0.5-validation.md) records retain their original scope.
 
 ## Roadmap
 

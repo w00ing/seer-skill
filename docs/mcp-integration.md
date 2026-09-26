@@ -74,11 +74,11 @@ MCP_TIMEOUT=20000 claude --mcp-config "$MCP_CONFIG" --strict-mcp-config \
 
 `MCP_TIMEOUT` is the startup timeout in milliseconds; `timeout` in the JSON is the per-tool-call timeout, also in milliseconds. Claude Code versions before 2.1.246 can still wait for approval of project `.mcp.json` servers that strict mode does not load. If that affects a session, update Claude Code or run the evaluation from a separate trusted directory while keeping the explicit `--project-root` argument.
 
-Keep another option after `--mcp-config "$MCP_CONFIG"`: that option accepts multiple values, so a prompt placed immediately after its filename can be interpreted as another configuration. Model-backed evaluation also requires a valid host login. The [v0.8 validation record](v0.8-validation.md) distinguishes configuration checks from completed host tool calls.
+Keep another option after `--mcp-config "$MCP_CONFIG"`: that option accepts multiple values, so a prompt placed immediately after its filename can be interpreted as another configuration. Model-backed evaluation also requires a valid host login. The [v0.8 validation record](v0.8-validation.md) records the Codex task and earlier Claude authentication failure; the [v0.9 follow-up](v0.9-validation.md#claude-code-host-follow-up) records completed Claude Code 2.1.283 tool calls and their limits.
 
 ## Tool use and baseline approval
 
-The server exposes `seer_help({"command":"verify"})` and `seer_run({"arguments":[...]})`. `seer_run` accepts argv for `doctor`, `windows`, `capture`, `verify`, `inspect`, `assert`, and `wait`, and returns the Seer CLI JSON in `structuredContent` and text. Check the returned `status`: `fail` and `needs_baseline` are valid Seer outcomes, not MCP transport errors. An MCP `isError` result means the command itself had an operational error.
+The server exposes `seer_help({"command":"verify"})` and `seer_run({"arguments":[...]})`. `seer_run` accepts argv for `doctor`, `windows`, `capture`, `verify`, `inspect`, `assert`, `wait`, `report`, and `diagnostics`, and returns the Seer CLI JSON in `structuredContent` and text. Check the returned `status`: `fail` and `needs_baseline` are valid Seer outcomes, not MCP transport errors. An MCP `isError` result means the command itself had an operational error.
 
 If `verify` returns `needs_baseline`, inspect the current image and ask the user before creating or replacing a baseline. The MCP server rejects `--create-baseline` and `--update-baseline`; after explicit approval, perform that action with the Seer CLI, then use `seer_run` to verify it. Seer does not infer approval from a missing baseline or a passing tool call.
 

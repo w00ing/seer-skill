@@ -15,7 +15,7 @@ Native window operations require a visible, unlocked macOS desktop plus the rele
 
 Only the 2× native fixture geometry has been measured. Real 1×, mixed-scale, display-switching, and unusual DPI configurations remain untested. Image size/DPI mismatch regressions use synthetic images and do not establish those physical-display scenarios. Comparisons reject size and known-scale mismatches unless `--resize` explicitly opts into normalization; unknown scale remains unknown.
 
-macOS versions outside the measured 27.0 native environment and configured 26 CI environment, Intel hardware, and non-macOS native operation have no coverage claim here. Host installations and updates are evaluated by copying into isolated temporary skill directories; no existing user installation is overwritten. Codex's representative model-backed task passed in v0.8. Claude Code's actual model-backed tool use remains unverified despite configuration acceptance.
+macOS versions outside the measured 27.0 native environment and configured 26 CI environment, Intel hardware, and non-macOS native operation have no coverage claim here. Host installations and updates are evaluated by copying into isolated temporary skill directories; no existing user installation is overwritten. Codex's representative model-backed task passed in v0.8. Claude Code 2.1.283 passed the [same representative task against Seer v0.9](v0.9-validation.md#claude-code-host-follow-up): help plus matching, changed, and missing-baseline comparisons, with baseline preservation. This single synthetic task does not establish Claude-driven native capture, OCR, maintenance commands, or marketplace installation.
 
 ## Maintaining the matrix
 
